@@ -1,0 +1,76 @@
+
+package prfstream;
+
+import static com.maxeler.maxcompiler.v2.managers.standard.Manager.link;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.managers.BuildConfig;
+import com.maxeler.maxcompiler.v2.managers.engine_interfaces.CPUTypes;
+import com.maxeler.maxcompiler.v2.managers.engine_interfaces.EngineInterface;
+import com.maxeler.maxcompiler.v2.managers.engine_interfaces.InterfaceParam;
+import com.maxeler.maxcompiler.v2.managers.standard.IOLink.IODestination;
+import com.maxeler.maxcompiler.v2.managers.standard.Manager;
+import com.maxeler.maxcompiler.v2.managers.standard.Manager.IOType;
+
+public class PRFStreamManager {
+
+	private static final String s_kernelName = "PRFStreamKernel";
+
+	public static void main(String[] args) {
+		PRFStreamEngineParameters params = new PRFStreamEngineParameters(args);
+		Manager manager = new Manager(params);
+		Kernel kernel   = new PRFStreamKernel(manager.makeKernelParameters(s_kernelName));
+        manager.setClockFrequency(120);
+		manager.setKernel(kernel);
+		manager.setIO(
+            IOType.ALL_CPU
+			);
+
+		manager.createSLiCinterface(interfaceDefault());
+		
+		configBuild(manager, params);
+		manager.build();
+	}
+
+	private static EngineInterface interfaceDefault() {
+		EngineInterface engine_interface = new EngineInterface();
+		CPUTypes   type = CPUTypes.INT64;
+		int        size = type.sizeInBytes();
+        int p = PRFConstants.p;
+        int q = PRFConstants.q;
+		InterfaceParam  N    = engine_interface.addParam("VEC_SIZE", CPUTypes.INT64);
+		InterfaceParam  PRFMODE    = engine_interface.addParam("prfMode", CPUTypes.INT64);
+		InterfaceParam  copyRepeats= engine_interface.addParam("copy_repeats", CPUTypes.INT64);
+
+		engine_interface.setScalar(s_kernelName, "vectorSize", N);
+		engine_interface.setScalar(s_kernelName, "prfMode", PRFMODE);
+		engine_interface.setScalar(s_kernelName, "copy_repeats", copyRepeats);
+
+
+        InterfaceParam ticks = (PRFMODE === PRFStreamKernel.PRFMode.OFFLOAD.ordinal() | PRFMODE === PRFStreamKernel.PRFMode.LOAD.ordinal())?
+            3*N/(p*q) : copyRepeats*(N/(p*q)+PRFStreamKernel.loop_delay);
+InterfaceParam inN = (PRFMODE === PRFStreamKernel.PRFMode.LOAD.ordinal())? N:0;
+		engine_interface.setTicks(s_kernelName, ticks);
+		engine_interface.setStream("aStream",   type, inN * size);
+		engine_interface.setStream("bStream",   type, inN * size);
+		engine_interface.setStream("cStream",   type, inN * size);
+        InterfaceParam outN = (PRFMODE === PRFStreamKernel.PRFMode.OFFLOAD.ordinal())? N:2;
+            engine_interface.setStream("aOutStream",   type, (size * outN));
+            engine_interface.setStream("bOutStream",   type, (size * outN));
+            engine_interface.setStream("cOutStream",   type, (size * outN));
+            //engine_interface.setStream("aOutStream",   type, (size * N));
+            //engine_interface.setStream("bOutStream",   type, (size * N));
+            //engine_interface.setStream("cOutStream",   type, (size * N));
+		return engine_interface;
+	}
+	
+	private static void configBuild(Manager manager, PRFStreamEngineParameters params) {
+		manager.setEnableStreamStatusBlocks(true);
+		BuildConfig buildConfig = manager.getBuildConfig();
+		//buildConfig.setMPPRCostTableSearchRange(params.getMPPRStartCT(), params.getMPPREndCT());
+		buildConfig.setMPPRCostTableSearchRange(1, 4);
+		buildConfig.setMPPRParallelism(4);
+		buildConfig.setMPPRRetryNearMissesThreshold(params.getMPPRRetryThreshold());
+	}
+}
+

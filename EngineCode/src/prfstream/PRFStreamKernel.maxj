@@ -1,0 +1,343 @@
+ package prfstream;
+ 
+ import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.RoundingMode ;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEType;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVectorType;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.KernelMath ;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.core.CounterChain ;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector ;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEStruct;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEStructType;
+ import java.util.*;
+ 
+ 
+ class PRFStreamKernel extends Kernel {
+ 
+    static public final DFEType type = dfeInt(64);
+    static public final DFEType prf_input_type = dfeUInt(64);
+     static public DFEVectorType<DFEVar> interleavedFloatType = new DFEVectorType<DFEVar>( type, PRFConstants.p*PRFConstants.q ) ;
+     static final    int p = PRFConstants.p;
+     static final    int q = PRFConstants.q;
+ 
+     static final int loop_delay=14;
+      public DFEStructType prf_inputs,prf_outputs;
+     //
+     //Need the follwing modes:
+     //Fill, the host fills the PRF
+     //One mode for each STREAM benchmark: copy etc..
+     //Output, the contents of the prf are sent to the host to verify
+     //everything executed correctly.
+ 
+ 
+     /*
+      * To perform the stream benchmark operations the prf needs to have
+      * independent read and writes and 2 read ports.
+      *
+      * In order to have two read ports accessible independently the
+      * data needs to be replicated into mirrored memory structures.
+      * This implies that the memory resources needs to be twice as much
+      * as the data stored.
+      *
+      * For the PRF vectis implementation the biggest memory capacity
+      * achievable having 2 read ports is 2MB with a logical matrix of 
+      * 512 x 512 containing 64bit elements.
+      *
+      * The stream benchmark needs to store 3 vectors, a b and c. To maximize 
+      * the utilization of the PRF we can split the logical matrix in chuncks
+      * of 170 rows, such that each vector is stored in 170 rows. This implies
+      * that the three vectors will occupy 510 rows leaving only 2 rows of the 
+      * prf logical matrix unused.
+      *
+      * Following the vector mapping described above this constrains the size
+      * of the input vectors to 170 rows x 512 columns = 87040 64bit elements.
+      * The other requirement, that enables to simplify the prf controller, is
+      * that the size of each input vector has to be a multiple of the number
+      * of lanes of the prf.
+      */
+ 
+     public enum PRFMode {
+         LOAD, OFFLOAD, COPY, SCALE, ADD, TRIAD
+     }
+ 
+ 
+ 
+     protected class Controls {
+         private final DFEVar prfMode;
+         private final DFEVar vectorSize;
+         private final DFEVar isTrue, isFalse ;
+         private final DFEVar iterationCounter;
+         private final DFEVar copyRepeats;
+         private final int lanes= PRFConstants.p*PRFConstants.q;
+         Controls (Kernel kernel, DFEVar _prfMode, DFEVar _vectorSize, DFEVar _copyRepeats){
+             this.isTrue = kernel.constant.var( dfeUInt(1), 1 ) ;
+             this.isFalse = kernel.constant.var( dfeUInt(1), 0 ) ;
+ 
+             this.prfMode = _prfMode;
+             this.vectorSize = _vectorSize;
+             this.copyRepeats=_copyRepeats;
+ 
+             DFEVar total_iterations;
+             DFEVar load_or_offload=((this.prfMode === PRFMode.LOAD.ordinal()) | (this.prfMode === PRFMode.OFFLOAD.ordinal()));
+             total_iterations= load_or_offload ? (3*this.vectorSize)/this.lanes : kernel.constant.var(0);//constant var 0 is a place older for the computations case
+             total_iterations = (this.prfMode === PRFMode.COPY.ordinal()) ? this.copyRepeats*(this.vectorSize/this.lanes)+loop_delay: total_iterations;
+                 this.iterationCounter= kernel.control.count.simpleCounter(64,total_iterations.cast(dfeUInt(64)));
+         
+             //Initialize prf_intput DFEStructType
+             prf_inputs = new DFEStructType(
+                                     DFEStructType.sft("RowIndex",prf_input_type),
+                                     DFEStructType.sft("ColumnIndex",prf_input_type),
+                                     DFEStructType.sft("WriteEnable",prf_input_type),
+                                     DFEStructType.sft("AccType",prf_input_type),
+ 
+                                     // Load module read dummy inputs
+                                     DFEStructType.sft("index_i_read_0",prf_input_type),
+                                     DFEStructType.sft("index_j_read_0",prf_input_type),
+                                     DFEStructType.sft("acc_type_read_0",prf_input_type),
+                                     DFEStructType.sft("index_i_read_1",prf_input_type),
+                                     DFEStructType.sft("index_j_read_1",prf_input_type),
+                                     DFEStructType.sft("acc_type_read_1",prf_input_type)
+ 
+                                                     );
+             prf_outputs = new DFEStructType(
+                                         
+                                     DFEStructType.sft("o_P_0",interleavedFloatType),
+                                     DFEStructType.sft("o_P_1",interleavedFloatType)
+                                                     );
+ 
+         }
+ 
+         public DFEVar readingA(){
+             DFEVar readingA_ifLoad = this.iterationCounter< (this.vectorSize/(p*q))? this.isTrue:this.isFalse;
+             return ((this.prfMode === PRFMode.LOAD.ordinal()) ? readingA_ifLoad : this.isFalse);
+         }
+ 
+         public DFEVar readingB(){
+             DFEVar readingB_ifLoad = 
+                 (this.iterationCounter< 2*(this.vectorSize/(p*q)) & (~this.readingA()))
+                 ? this.isTrue:this.isFalse;
+             return ((this.prfMode === PRFMode.LOAD.ordinal())  ? readingB_ifLoad : this.isFalse);
+         }
+ 
+        public DFEVar readingC(){
+             DFEVar readingC_ifLoad = 
+                 ((~this.readingB()) & (~this.readingA()) & (this.iterationCounter< 3*(this.vectorSize/(p*q))))
+                 ? this.isTrue:this.isFalse;
+             return ((this.prfMode === PRFMode.LOAD.ordinal()) ? readingC_ifLoad : this.isFalse);
+         }   
+         public DFEVar outputA(){
+             DFEVar outputA_ifOffload = this.iterationCounter< (this.vectorSize/(p*q))? this.isTrue:this.isFalse;
+             DFEVar outputA_ifLoad = (this.iterationCounter > ((3 *this.vectorSize/(p*q)) - 3));
+             DFEVar outputA_ifCompute = (this.iterationCounter > (this.copyRepeats*(this.vectorSize/(p*q)))+loop_delay-3);
+             DFEVar outputA_flag = outputA_ifLoad;
+             outputA_flag = ((this.prfMode === PRFMode.OFFLOAD.ordinal()) ? outputA_ifOffload : outputA_flag);
+             outputA_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputA_ifCompute : outputA_flag);
+             return outputA_flag;
+         }
+ 
+        public DFEVar outputB(){
+             DFEVar outputB_ifOffload = 
+                 (this.iterationCounter< 2*(this.vectorSize/(p*q)) & (~this.outputA()))
+                 ? this.isTrue:this.isFalse;
+             DFEVar outputB_ifLoad = (this.iterationCounter > ((3 *this.vectorSize/(p*q)) - 3));
+             DFEVar outputB_ifCompute = (this.iterationCounter > (this.copyRepeats*(this.vectorSize/(p*q)))+loop_delay-3);
+             DFEVar outputB_flag = outputB_ifLoad;
+             outputB_flag = ((this.prfMode === PRFMode.OFFLOAD.ordinal()) ? outputB_ifOffload : outputB_flag);
+             outputB_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputB_ifCompute : outputB_flag);
+             return outputB_flag;
+         }
+ 
+        public DFEVar outputC(){
+             DFEVar outputC_ifOffload = 
+                 ((~this.outputB()) & (~this.outputA()))
+                 ? this.isTrue:this.isFalse;
+             DFEVar outputC_ifLoad = (this.iterationCounter > ((3 *this.vectorSize/(p*q)) - 3));
+             DFEVar outputC_ifCompute = (this.iterationCounter > (this.copyRepeats*((this.vectorSize/(p*q)))+loop_delay)-3);
+             DFEVar outputC_flag = outputC_ifLoad;
+             outputC_flag = ((this.prfMode === PRFMode.OFFLOAD.ordinal()) ? outputC_ifOffload : outputC_flag);
+             outputC_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputC_ifCompute: outputC_flag);
+             return outputC_flag;
+         }
+ 
+         public DFEStruct getPRFInputs(Kernel kernel){
+ 
+             List<DFEStruct> PRFInputs_list = new ArrayList<DFEStruct>();
+             
+             // Prepare the inputs for the loading mode
+             DFEStruct PRFInputs_load = prf_inputs.newInstance(kernel);
+             CounterChain load_offload_counter_chain = kernel.control.count.makeCounterChain( (this.prfMode === PRFMode.LOAD.ordinal()) | (this.prfMode === PRFMode.OFFLOAD.ordinal()) );
+             DFEVar vector_id = load_offload_counter_chain.addCounter(3,1).cast(dfeUInt(64));
+             DFEVar elementCounter = load_offload_counter_chain.addCounter(this.vectorSize/this.lanes,1);
+             debug.simPrintf("vectorid: %d\n",vector_id);
+             DFEVar rowIndex_loadoffload=(elementCounter*this.lanes/PRFConstants.M)+(vector_id*170);
+             DFEVar columnIndex_loadoffload=KernelMath.modulo(elementCounter*this.lanes,PRFConstants.M).cast(dfeUInt(64));
+             DFEVar accType = kernel.constant.var(1).cast(dfeUInt(64));//ROW shape
+             DFEVar writeEn =  kernel.constant.var(0xFFFFFFF).cast(dfeUInt(64));
+             DFEVar zeroDfevar = kernel.constant.var(0).cast(dfeUInt(64));
+             DFEVar oneDfevar = kernel.constant.var(1).cast(dfeUInt(64));
+             DFEVar rowIndex_i_read_0 = kernel.constant.var(0);
+             DFEVar rowIndex_j_read_0 = kernel.constant.var(0);
+             DFEVar accType_read_0 = kernel.constant.var(1).cast(dfeUInt(64));
+             DFEVar rowIndex_i_read_1 = kernel.constant.var(0);
+             DFEVar rowIndex_j_read_1 = kernel.constant.var(0);
+             DFEVar accType_read_1 = kernel.constant.var(1);
+             
+             // Load module write inputs
+             PRFInputs_load["RowIndex"]<==rowIndex_loadoffload;
+             PRFInputs_load["ColumnIndex"]<==columnIndex_loadoffload;
+             PRFInputs_load["WriteEnable"]<==writeEn;
+             PRFInputs_load["AccType"]<==accType;
+ 
+             // Load module read dummy inputs
+             PRFInputs_load["index_i_read_0"]<==zeroDfevar;
+             PRFInputs_load["index_j_read_0"]<==zeroDfevar;
+             PRFInputs_load["acc_type_read_0"]<==zeroDfevar;
+             PRFInputs_load["index_i_read_1"]<==zeroDfevar;
+             PRFInputs_load["index_j_read_1"]<==zeroDfevar;
+             PRFInputs_load["acc_type_read_1"]<==oneDfevar;
+ 
+ 
+             PRFInputs_list.add(PRFInputs_load);
+ 
+             // Prepare the inputs for the offloading mode
+             DFEStruct PRFInputs_offload = prf_inputs.newInstance(kernel);
+ 
+             //Dummy write inputs
+             PRFInputs_offload["RowIndex"]<==zeroDfevar;
+             PRFInputs_offload["ColumnIndex"]<==zeroDfevar;
+             PRFInputs_offload["WriteEnable"]<==zeroDfevar;
+             PRFInputs_offload["AccType"]<==oneDfevar;
+ 
+             // Useful read port 1 inputs
+             PRFInputs_offload["index_i_read_0"]<==rowIndex_loadoffload;
+             PRFInputs_offload["index_j_read_0"]<==columnIndex_loadoffload;
+             PRFInputs_offload["acc_type_read_0"]<==oneDfevar;
+ 
+             //Dummy read port 2 inputs
+             PRFInputs_offload["index_i_read_1"]<==zeroDfevar;
+             PRFInputs_offload["index_j_read_1"]<==zeroDfevar;
+             PRFInputs_offload["acc_type_read_1"]<==oneDfevar;
+ 
+             PRFInputs_list.add(PRFInputs_offload);
+ 
+             //Prepare input for the copy mode
+             DFEStruct PRFInputs_copy = prf_inputs.newInstance(kernel);
+             CounterChain copy_counter_chain = kernel.control.count.makeCounterChain( (this.isTrue) );
+             DFEVar copy_elementCounter = copy_counter_chain.addCounter(this.vectorSize/this.lanes,1);
+             DFEVar rowIndex_copy_read=(copy_elementCounter*this.lanes/PRFConstants.M);
+             DFEVar columnIndex_copy_read=KernelMath.modulo(copy_elementCounter*this.lanes,PRFConstants.M).cast(dfeUInt(64));           
+             
+             //DFEVar rowIndex_copy_write= copy_elementCounter===0 ? zeroDfevar : stream.offset(rowIndex_copy_read,-1)+340;//added C vector offset
+             //DFEVar columnIndex_copy_write= copy_elementCounter===0 ? zeroDfevar : stream.offset(columnIndex_copy_read,-1);
+             //DFEVar writeEnable_copy = copy_elementCounter===0 ? zeroDfevar : kernel.constant.var(0xFFFFFFF).cast(dfeUInt(64));  
+ 
+             DFEVar rowIndex_copy_write= stream.offset(rowIndex_copy_read,-loop_delay)+340;//added C vector offset
+             DFEVar columnIndex_copy_write= stream.offset(columnIndex_copy_read,-loop_delay);
+             DFEVar writeEnable_copy = kernel.constant.var(0xFFFFFFF).cast(dfeUInt(64));            
+ 
+             // Copy write inputs
+             PRFInputs_copy["RowIndex"]<==rowIndex_copy_write;
+             PRFInputs_copy["ColumnIndex"]<==columnIndex_copy_write;
+             PRFInputs_copy["WriteEnable"]<==writeEnable_copy;
+             PRFInputs_copy["AccType"]<==oneDfevar;
+   
+             // Copy read port one inputs
+             PRFInputs_copy["index_i_read_0"]<==rowIndex_copy_read;
+             PRFInputs_copy["index_j_read_0"]<==columnIndex_copy_read;
+             PRFInputs_copy["acc_type_read_0"]<==oneDfevar;
+ 
+             //Dummy read port 2 inputs
+             PRFInputs_copy["index_i_read_1"]<==zeroDfevar;
+             PRFInputs_copy["index_j_read_1"]<==zeroDfevar;
+             PRFInputs_copy["acc_type_read_1"]<==oneDfevar;
+ 
+             PRFInputs_list.add(PRFInputs_copy);
+             //Select correct input based on prfmode
+             DFEVar select = this.prfMode.cast(dfeUInt(2));
+             DFEStruct PRFInputs=control.mux(select,PRFInputs_list);
+ 
+             return PRFInputs;
+        
+         }
+     }
+ 
+     protected class Inputs {
+         //Input stream containing the A, B and C vectors.
+         private final DFEVector<DFEVar> aStream,bStream,cStream;
+         private DFEVector<DFEVar> combinedStream;
+ 
+         Inputs(Kernel kernel, Controls controls){
+             this.aStream = kernel.io.input("aStream",interleavedFloatType,controls.readingA());
+             this.bStream = kernel.io.input("bStream",interleavedFloatType,controls.readingB());
+             this.cStream = kernel.io.input("cStream",interleavedFloatType,controls.readingC());
+             this.combinedStream = this.aStream;
+             this.combinedStream = (controls.readingB() )? this.bStream : this.combinedStream;
+             this.combinedStream = (controls.readingC() )? this.cStream : this.combinedStream;
+         }
+     }
+     protected class Outputs{
+         private final DFEVector<DFEVar> outAStream, outBStream,outCStream;
+         Outputs(Kernel kernel, Controls controls){
+             this.outAStream = kernel.io.output("aOutStream",interleavedFloatType,controls.outputA());
+             this.outBStream = kernel.io.output("bOutStream",interleavedFloatType,controls.outputB());
+             this.outCStream = kernel.io.output("cOutStream",interleavedFloatType,controls.outputC());
+         }
+     }
+    protected PRFStreamKernel(KernelParameters parameters) {
+        super(parameters);
+        
+         optimization.pushRoundingMode( RoundingMode.TRUNCATE ) ;
+         //Scalar Input
+         DFEVar vectorSize = io.scalarInput("vectorSize", dfeUInt(64));
+         DFEVar prfMode = io.scalarInput("prfMode", type);
+         DFEVar copyRepeats = io.scalarInput("copy_repeats", dfeUInt(64));
+         
+         Controls controls = new Controls( this, prfMode, vectorSize,copyRepeats);
+         Inputs inputs = new Inputs( this, controls);
+         Outputs outputs = new Outputs(this,controls);
+ 
+         
+         DFEStruct PRFInputs = controls.getPRFInputs(this);
+ 
+     //    DFEVector<DFEVar> prfOutput = Utils.polyMem( this, PRFInputs.get("RowIndex").cast(dfeInt(64)), PRFInputs.get("ColumnIndex").cast(dfeInt(64)), PRFInputs.get("AccType"), inputs.combinedStream,PRFInputs.get("WriteEnable").cast(dfeInt(64)));
+ 
+         DFEVector<DFEVar> prf_input_data = inputs.combinedStream;
+         DFEVector<DFEVar> prf_input_data_copy = interleavedFloatType.newInstance(this);
+         prf_input_data = (prfMode === PRFMode.COPY.ordinal()) ? prf_input_data_copy : prf_input_data;
+ 
+         //Debugging
+          debug.simPrintf("tick %d input: %d %d %d | %d %d %d:",controls.iterationCounter, controls.readingA(),controls.readingB(),controls.readingC(), controls.outputA(), controls.outputB(),controls.outputC());
+         for(int i =0;i<p*q;i++)
+             debug.simPrintf("%d ",prf_input_data[i]);
+         debug.simPrintf("\n");
+         debug.simPrintf("RowIndex: %d, ColumnIndex: %d, AccType:%d, WriteEnable: %d\n",PRFInputs.get("RowIndex").cast(dfeInt(64)), PRFInputs.get("ColumnIndex").cast(dfeInt(64)), PRFInputs.get("AccType").cast(dfeInt(64)),PRFInputs.get("WriteEnable").cast(dfeInt(64)));
+         debug.simPrintf("RowIndexRead0: %d, ColumnIndexRead0: %d, AccTypeRead0:%d\n",PRFInputs.get("index_i_read_0").cast(dfeInt(64)), PRFInputs.get("index_j_read_0").cast(dfeInt(64)), PRFInputs.get("acc_type_read_0").cast(dfeInt(64)));
+         debug.simPrintf("RowIndexRead1: %d, ColumnIndexRead1: %d, AccTypeRead1:%d\n",PRFInputs.get("index_i_read_1").cast(dfeInt(64)), PRFInputs.get("index_j_read_1").cast(dfeInt(64)), PRFInputs.get("acc_type_read_1").cast(dfeInt(64)));
+         //END Debugging
+ 
+         Hashtable<String, DFEVector<DFEVar>> prfMultiportOut = Utils.polyMem_multiport(this,PRFInputs,prf_input_data);
+ 
+         optimization.pushPipeliningFactor(0.0);
+         DFEVector<DFEVar> prfOutput=prfMultiportOut.get("o_P_0");
+         prf_input_data_copy <== stream.offset(prfOutput,-loop_delay);
+         optimization.popPipeliningFactor () ;
+ 
+         debug.simPrintf("prf out port 1: ");
+         for(int i =0;i<p*q;i++)
+             debug.simPrintf("%d ",prfOutput[i]);
+         //DFEVector<DFEVar> prfOutput1=prfMultiportOut.get("o_P_1");
+         //debug.simPrintf("   prf out port 2: ");
+         //for(int i =0;i<8;i++)
+         //    debug.simPrintf("%d ",prfOutput1[i]);
+ 
+         debug.simPrintf("\n");
+ 
+         outputs.outAStream <==prfOutput;
+         outputs.outBStream <==prfOutput;
+         outputs.outCStream <==prfOutput;
+     }
+ 
+     }
+

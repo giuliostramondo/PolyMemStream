@@ -1,0 +1,51 @@
+Fri 14:00: ########################################## 
+Fri 14:00: Compiling.
+Fri 14:00: ########################################## 
+
+Fri 14:00: MaxCompiler version: 2015.1.1.
+Fri 14:00: Build Simulation run rule for prf_stream_benchmark start time: Fri Feb 09 14:00:30 CET 2018.
+Fri 14:00: Project location: /home/giuliostramondo/prf_stream_benchmark/APP.
+Fri 14:00: Detailed build log: /home/giuliostramondo/prf_stream_benchmark/APP/RunRules/Simulation/build.log.
+
+Fri 14:00: Compiling Engine Code.
+Fri 14:00: Building PRFStream.max file. 
+Fri 14:00: Setting environment variable:
+Fri 14:00: MAXCOMPILER_BUILD_DIR : /home/giuliostramondo/prf_stream_benchmark/APP/RunRules/Simulation/maxfiles
+Fri 14:00: MAX_BUILDPARAMS : DFEModel='VECTIS' target='DFE_SIM' maxFileName='PRFStream'  enableMPCX='true' 
+Fri 14:00: Building output:
+Fri 14:00: MaxCompiler version: 2015.1.1
+Fri 14:00: Build "PRFStream" start time: Fri Feb 09 14:00:35 CET 2018
+Fri 14:00: Main build process running as user giuliostramondo on host vectis.science.uva.nl
+Fri 14:00: Build location: /home/giuliostramondo/prf_stream_benchmark/APP/RunRules/Simulation/maxfiles/PRFStream_VECTIS_DFE_SIM
+Fri 14:00: Detailed build log available in "_build.log"
+Fri 14:00: WARNING: Disabling MPCX since this setting is not available for simulations.
+Fri 14:00: Instantiating manager
+Fri 14:00: Instantiating kernel "PRFStreamKernel"
+Fri 14:00: WARNING: Detected offset on DFEVector. If you are replacing a DFEArray with DFEVector you
+Fri 14:00: WARNING: can ignore this message. If you were already using DFEVector (formerly KMultiPipe)
+Fri 14:00: WARNING: you need to use stream.offsetStriped() to retain previous behaviour.
+Fri 14:00: WARNING: These warnings can be suppressed for your kernel using
+Fri 14:00: WARNING: stream.suppressOffsetVectorWarnings().
+Fri 14:00: WARNING: com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.core.Stream.offset(Stream.java:241)
+Fri 14:00: WARNING: prfstream.PRFStreamKernel.<init>(PRFStreamKernel.maxj:320)
+Fri 14:00: WARNING: prfstream.PRFStreamManager.main(PRFStreamManager.maxj:22)
+Fri 14:00: Compiling manager (CPU I/O Only)
+Fri 14:00: 
+Fri 14:00: Compiling kernel "PRFStreamKernel"
+Fri 14:00: WARNING: Warning (UNCONNECTED_DESIGN_ELEMENT):
+Fri 14:00: WARNING: Unconnected elements in design 'PRFStreamKernel'
+Fri 14:00: WARNING: details in : /home/giuliostramondo/prf_stream_benchmark/APP/RunRules/Simulation/maxfiles/PRFStream_VECTIS_DFE_SIM/scratch/PRFStreamKernel_graph_warnings.txt
+Fri 14:00: Running back-end simulation build (3 phases)
+Fri 14:00: (1/3) - Prepare MaxFile Data (GenerateMaxFileDataFile)
+Fri 14:00: (2/3) - Compile Simulation Modules (SimCompilePass)
+Fri 14:00: ERROR: Error running external tool :-
+Fri 14:00: ERROR: Problem            : Command failed with exit code: 2
+Fri 14:00: ERROR: Command run        : make -j2
+Fri 14:00: ERROR: Directory run in   : /home/giuliostramondo/prf_stream_benchmark/APP/RunRules/Simulation/maxfiles/PRFStream_VECTIS_DFE_SIM/scratch/software-sim/build
+Fri 14:00: ERROR: Exit code          : 2
+Fri 14:00: ERROR: Detailed build log : /home/giuliostramondo/prf_stream_benchmark/APP/RunRules/Simulation/maxfiles/PRFStream_VECTIS_DFE_SIM/_build.log
+Fri 14:00: Building: PRFStream.max file finished.
+Fri 14:00: Build process failed while trying to create PRFStream.max file
+Fri 14:00: Engine build finished.Build failed: Fri Feb 09 14:00:56 CET 2018
+
+

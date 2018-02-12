@@ -1,0 +1,39 @@
+/**
+ * @file PRFConstants.maxj
+ * @author Giulio Stramondo
+ * @email g.stramondo@uva.nl
+ *
+ * @brief PolyMem constants
+ */
+package prfstream;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEType;
+import com.maxeler.maxcompiler.v2.managers.engine_interfaces.CPUTypes;
+
+public class PRFConstants extends Kernel{
+    static int p = 2;
+    static int q = 4;
+    static int M = 512;
+    static int N = 512;
+    static int MEMORY_DEPTH = (M*N)/(p*q);
+    static int MEMORY_ADDRESS_SIZE =(int) Math.ceil( Math.log(MEMORY_DEPTH)/Math.log(2.0)); //log_2 of MEMORY_DEPTH;
+    static final DFEType type = dfeUInt(64);
+    static final CPUTypes cpu_type = CPUTypes.INT64;
+    static boolean INV_M=false;
+    static boolean INDEPENDENT_READ_WRITE=true;
+    static int READ_PORT_NB=2;
+    static enum MappingScheme {
+         ReO,
+         ReRo,
+         ReCo,
+         RoCo,
+         ReTr,
+        }
+    static MappingScheme mappingScheme=MappingScheme.RoCo;
+
+    protected PRFConstants(KernelParameters parameters) {
+        super(parameters);
+    }
+}
