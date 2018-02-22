@@ -22,7 +22,7 @@
      static final    int p = PRFConstants.p;
      static final    int q = PRFConstants.q;
  
-     static final int loop_delay=14;
+     static final int loop_delay=15;
       public DFEStructType prf_inputs,prf_outputs;
      //
      //Need the follwing modes:
@@ -82,7 +82,7 @@
              DFEVar total_iterations;
              DFEVar load_or_offload=((this.prfMode === PRFMode.LOAD.ordinal()) | (this.prfMode === PRFMode.OFFLOAD.ordinal()));
              total_iterations= load_or_offload ? (3*this.vectorSize)/this.lanes : kernel.constant.var(0);//constant var 0 is a place older for the computations case
-             total_iterations = (this.prfMode === PRFMode.COPY.ordinal()) ? this.copyRepeats*(this.vectorSize/this.lanes)+loop_delay: total_iterations;
+             total_iterations = ~(prfMode === PRFMode.LOAD.ordinal() |prfMode === PRFMode.OFFLOAD.ordinal() ) ? this.copyRepeats*(this.vectorSize/this.lanes)+loop_delay: total_iterations;
                  this.iterationCounter= kernel.control.count.simpleCounter(64,total_iterations.cast(dfeUInt(64)));
          
              //Initialize prf_intput DFEStructType
@@ -133,7 +133,8 @@
              DFEVar outputA_ifCompute = (this.iterationCounter > (this.copyRepeats*(this.vectorSize/(p*q)))+loop_delay-3);
              DFEVar outputA_flag = outputA_ifLoad;
              outputA_flag = ((this.prfMode === PRFMode.OFFLOAD.ordinal()) ? outputA_ifOffload : outputA_flag);
-             outputA_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputA_ifCompute : outputA_flag);
+             //outputA_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputA_ifCompute : outputA_flag);
+             outputA_flag = (~(prfMode === PRFMode.LOAD.ordinal() |prfMode === PRFMode.OFFLOAD.ordinal() ) ? outputA_ifCompute : outputA_flag);
              return outputA_flag;
          }
  
@@ -145,7 +146,8 @@
              DFEVar outputB_ifCompute = (this.iterationCounter > (this.copyRepeats*(this.vectorSize/(p*q)))+loop_delay-3);
              DFEVar outputB_flag = outputB_ifLoad;
              outputB_flag = ((this.prfMode === PRFMode.OFFLOAD.ordinal()) ? outputB_ifOffload : outputB_flag);
-             outputB_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputB_ifCompute : outputB_flag);
+             //outputB_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputB_ifCompute : outputB_flag);
+            outputB_flag = (~(prfMode === PRFMode.LOAD.ordinal() |prfMode === PRFMode.OFFLOAD.ordinal() ) ? outputB_ifCompute : outputB_flag);
              return outputB_flag;
          }
  
@@ -157,7 +159,9 @@
              DFEVar outputC_ifCompute = (this.iterationCounter > (this.copyRepeats*((this.vectorSize/(p*q)))+loop_delay)-3);
              DFEVar outputC_flag = outputC_ifLoad;
              outputC_flag = ((this.prfMode === PRFMode.OFFLOAD.ordinal()) ? outputC_ifOffload : outputC_flag);
-             outputC_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputC_ifCompute: outputC_flag);
+             //outputC_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputC_ifCompute: outputC_flag);
+            outputC_flag = (~(prfMode === PRFMode.LOAD.ordinal() |prfMode === PRFMode.OFFLOAD.ordinal() ) ? outputC_ifCompute: outputC_flag);
+
              return outputC_flag;
          }
  
@@ -254,8 +258,73 @@
              PRFInputs_copy["acc_type_read_1"]<==oneDfevar;
  
              PRFInputs_list.add(PRFInputs_copy);
+
+            //PRFInputs for scale are the same as for COPY
+            //TODO Actually is b= scalar*c
+            DFEStruct PRFInputs_scalar = prf_inputs.newInstance(kernel);
+            // Copy write inputs
+            PRFInputs_scalar["RowIndex"]<==stream.offset(rowIndex_copy_read,-loop_delay)+170;//added offset for b vector.
+            PRFInputs_scalar["ColumnIndex"]<==columnIndex_copy_write;
+            PRFInputs_scalar["WriteEnable"]<==writeEnable_copy;
+            PRFInputs_scalar["AccType"]<==oneDfevar;
+  
+            // Copy read port one inputs
+            PRFInputs_scalar["index_i_read_0"]<==rowIndex_copy_read+340;//added offset for c vector.
+            PRFInputs_scalar["index_j_read_0"]<==columnIndex_copy_read;
+            PRFInputs_scalar["acc_type_read_0"]<==oneDfevar;
+
+            //Dummy read port 2 inputs
+            PRFInputs_scalar["index_i_read_1"]<==zeroDfevar;
+            PRFInputs_scalar["index_j_read_1"]<==zeroDfevar;
+            PRFInputs_scalar["acc_type_read_1"]<==oneDfevar;
+
+            PRFInputs_list.add(PRFInputs_scalar);
+
+            //Prepare prf inputs for ADD
+            DFEStruct PRFInputs_add = prf_inputs.newInstance(kernel);
+            //everything is exactly as the copy except read port1 that has the B vector offset.           
+
+            // Copy write inputs
+            PRFInputs_add["RowIndex"]<==rowIndex_copy_write;
+            PRFInputs_add["ColumnIndex"]<==columnIndex_copy_write;
+            PRFInputs_add["WriteEnable"]<==writeEnable_copy;
+            PRFInputs_add["AccType"]<==oneDfevar;
+  
+            // Copy read port one inputs
+            PRFInputs_add["index_i_read_0"]<==rowIndex_copy_read;
+            PRFInputs_add["index_j_read_0"]<==columnIndex_copy_read;
+            PRFInputs_add["acc_type_read_0"]<==oneDfevar;
+
+            //Dummy read port 2 inputs
+            PRFInputs_add["index_i_read_1"]<==rowIndex_copy_read+170;
+            PRFInputs_add["index_j_read_1"]<==columnIndex_copy_read;
+            PRFInputs_add["acc_type_read_1"]<==oneDfevar;
+
+            PRFInputs_list.add(PRFInputs_add);
+
+            //Prepare prf inputs for TRIAD
+            DFEStruct PRFInputs_triad = prf_inputs.newInstance(kernel);
+            //everything is exactly as the copy except read port1 that has the B vector offset.           
+
+            // Copy write inputs
+            PRFInputs_triad["RowIndex"]<==stream.offset(rowIndex_copy_read,-loop_delay);//write in A
+            PRFInputs_triad["ColumnIndex"]<==columnIndex_copy_write;
+            PRFInputs_triad["WriteEnable"]<==writeEnable_copy;
+            PRFInputs_triad["AccType"]<==oneDfevar;
+  
+            // Copy read port one inputs
+            PRFInputs_triad["index_i_read_0"]<==rowIndex_copy_read+170;//Read B
+            PRFInputs_triad["index_j_read_0"]<==columnIndex_copy_read;
+            PRFInputs_triad["acc_type_read_0"]<==oneDfevar;
+
+            //Dummy read port 2 inputs
+            PRFInputs_triad["index_i_read_1"]<==rowIndex_copy_read+340;//Read C
+            PRFInputs_triad["index_j_read_1"]<==columnIndex_copy_read;
+            PRFInputs_triad["acc_type_read_1"]<==oneDfevar;
+
+            PRFInputs_list.add(PRFInputs_triad); 
              //Select correct input based on prfmode
-             DFEVar select = this.prfMode.cast(dfeUInt(2));
+             DFEVar select = this.prfMode.cast(dfeUInt(3));
              DFEStruct PRFInputs=control.mux(select,PRFInputs_list);
  
              return PRFInputs;
@@ -304,9 +373,9 @@
      //    DFEVector<DFEVar> prfOutput = Utils.polyMem( this, PRFInputs.get("RowIndex").cast(dfeInt(64)), PRFInputs.get("ColumnIndex").cast(dfeInt(64)), PRFInputs.get("AccType"), inputs.combinedStream,PRFInputs.get("WriteEnable").cast(dfeInt(64)));
  
          DFEVector<DFEVar> prf_input_data = inputs.combinedStream;
-         DFEVector<DFEVar> prf_input_data_copy = interleavedFloatType.newInstance(this);
-         prf_input_data = (prfMode === PRFMode.COPY.ordinal()) ? prf_input_data_copy : prf_input_data;
- 
+         DFEVector<DFEVar> prf_input_data_loopback = interleavedFloatType.newInstance(this);
+        prf_input_data = (prfMode === PRFMode.COPY.ordinal() |prfMode === PRFMode.ADD.ordinal() |prfMode === PRFMode.SCALE.ordinal()) ? prf_input_data_loopback : prf_input_data;
+        prf_input_data = (prfMode === PRFMode.LOAD.ordinal() |prfMode === PRFMode.OFFLOAD.ordinal()) ?prf_input_data: prf_input_data_loopback;
          //Debugging
           debug.simPrintf("tick %d input: %d %d %d | %d %d %d:",controls.iterationCounter, controls.readingA(),controls.readingB(),controls.readingC(), controls.outputA(), controls.outputB(),controls.outputC());
          for(int i =0;i<p*q;i++)
@@ -320,23 +389,39 @@
          Hashtable<String, DFEVector<DFEVar>> prfMultiportOut = Utils.polyMem_multiport(this,PRFInputs,prf_input_data);
  
          optimization.pushPipeliningFactor(0.0);
-         DFEVector<DFEVar> prfOutput=prfMultiportOut.get("o_P_0");
-         prf_input_data_copy <== stream.offset(prfOutput,-loop_delay);
-         optimization.popPipeliningFactor () ;
+        DFEVector<DFEVar> prfOutput1=prfMultiportOut.get("o_P_0");
+        DFEVector<DFEVar> prfOutput2=prfMultiportOut.get("o_P_1");
+
+        List<DFEVector> PRF_op_res_list = new ArrayList<DFEVector>();
+        PRF_op_res_list.add(stream.offset(prfOutput1,-loop_delay));//Copy
+        //DFEVar PRF_op_result=stream.offset(prfOutput1,-loop_delay);//Copy 
+        PRF_op_res_list.add(stream.offset(3*prfOutput1,-loop_delay));//SCALE
+        //PRF_op_result =( prfMode === PRFMode.SCALE.ordinal())?stream.offset(3*prfOutput1,-loop_delay):PRF_op_result;//SCALE
+        PRF_op_res_list.add(stream.offset(prfOutput1+prfOutput2,-loop_delay));//ADD
+        //PRF_op_result =( prfMode === PRFMode.ADD.ordinal())?stream.offset(prfOutput1+prfOutput2,-loop_delay):PRF_op_result;//ADD 
+
+        PRF_op_res_list.add(stream.offset(prfOutput1+3*prfOutput2,-loop_delay));//TRIAD
+        //PRF_op_result =( prfMode === PRFMode.TRIAD.ordinal())?stream.offset(prfOutput1+3*prfOutput2,-loop_delay):PRF_op_result;//TRIAD
+        DFEVar select = (prfMode-2).cast(dfeUInt(2));
+        //DFEStruct PRFInputs=control.mux(select,PRF_op_res_list);
+        prf_input_data_loopback <== control.mux(select,PRF_op_res_list);
+        //prf_input_data_loopback <== PRF_op_result;
+
+        optimization.popPipeliningFactor () ;
  
          debug.simPrintf("prf out port 1: ");
          for(int i =0;i<p*q;i++)
-             debug.simPrintf("%d ",prfOutput[i]);
+             debug.simPrintf("%d ",prfOutput1[i]);
          //DFEVector<DFEVar> prfOutput1=prfMultiportOut.get("o_P_1");
-         //debug.simPrintf("   prf out port 2: ");
-         //for(int i =0;i<8;i++)
-         //    debug.simPrintf("%d ",prfOutput1[i]);
+         debug.simPrintf("   prf out port 2: ");
+         for(int i =0;i<8;i++)
+             debug.simPrintf("%d ",prfOutput2[i]);
  
          debug.simPrintf("\n");
  
-         outputs.outAStream <==prfOutput;
-         outputs.outBStream <==prfOutput;
-         outputs.outCStream <==prfOutput;
+         outputs.outAStream <==prfOutput1;
+         outputs.outBStream <==prfOutput1;
+         outputs.outCStream <==prfOutput1;
      }
  
      }

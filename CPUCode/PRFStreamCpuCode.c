@@ -99,7 +99,7 @@ int main(int argc, char *argv[])
         if(argc>1){ //First input is vectorsize second input is how many time the FPGA executes the copy
             size = atoi(argv[1]);
             for(int i=0;i<6;i++){
-                if(i!=2)
+                if(i!=2 && i!=3)
                     bytes[i]=3 * sizeof(STREAM_TYPE) * size;//Load and offload use vectors a,b and c so the stream size is 3*vectorsize
                 else
                     
@@ -117,7 +117,7 @@ int main(int argc, char *argv[])
         int64_t *bOut = malloc(sizeBytes);
         int64_t *cOut = malloc(sizeBytes);
         
-        double		t, times[4][NTIMES];
+        double		t, times[6][NTIMES];
 
         // Generate input data
         for(int i = 0; i < size; ++i) {
@@ -194,27 +194,96 @@ int main(int argc, char *argv[])
                 printf("Errors were found during copy benchmark\n");
                 times[2][k] = -1;//Setting time to -1 to signal that an error happened
             }
-        }
+        
 
- 
+            printf("Scale benchmark ... \n");
+            prfStreamInput.param_prfMode=SCALE;
+            times[3][k] = mysecond();
+            PRFStream_run(StreamDFE,&prfStreamInput);
+            times[3][k] = mysecond() - times[3][k];
+            //Check correctness of copy benchmark
+            printf("Checking correctness: Offloading ... \n");
+            prfStreamInput.param_prfMode=OFFLOAD;
+            PRFStream_run(StreamDFE,&prfStreamInput);
+
+            for(int i = 0; i < size; ++i)
+                    if ( bOut[i] != 3* cOut[i]){
+                        error=1;
+                        printf("error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                    }
+
+            if(error){
+                printf("Errors were found during scale benchmark\n");
+                times[3][k] = -1;//Setting time to -1 to signal that an error happened
+            }
+            printf("ADD benchmark ... \n");
+            prfStreamInput.param_prfMode=ADD;
+            times[4][k] = mysecond();
+            PRFStream_run(StreamDFE,&prfStreamInput);
+            times[4][k] = mysecond() - times[4][k];
+            //Check correctness of copy benchmark
+            printf("Checking correctness: Offloading ... \n");
+            prfStreamInput.param_prfMode=OFFLOAD;
+            PRFStream_run(StreamDFE,&prfStreamInput);
+
+            for(int i = 0; i < size; ++i)
+                    if ( aOut[i] + bOut[i] != cOut[i]){
+                        error=1;
+                        printf("error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                    }
+
+            if(error){
+                printf("Errors were found during add benchmark\n");
+                times[4][k] = -1;//Setting time to -1 to signal that an error happened
+            }
+            printf("TRIAD benchmark ... \n");
+            prfStreamInput.param_prfMode=TRIAD;
+            times[5][k] = mysecond();
+            PRFStream_run(StreamDFE,&prfStreamInput);
+            times[5][k] = mysecond() - times[5][k];
+            //Check correctness of copy benchmark
+            printf("Checking correctness: Offloading ... \n");
+            prfStreamInput.param_prfMode=OFFLOAD;
+            PRFStream_run(StreamDFE,&prfStreamInput);
+
+            for(int i = 0; i < size; ++i)
+                    if ( aOut[i] != bOut[i] + 3* cOut[i]){
+                        error=1;
+                        printf("error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                    }
+
+            if(error){
+                printf("Errors were found during triad benchmark\n");
+                times[5][k] = -1;//Setting time to -1 to signal that an error happened
+            }
+        }
         for (int k=1; k<NTIMES; k++) /* note -- skip first iteration */
         {
-            for (int j=0; j<3; j++) {
+            for (int j=0; j<6; j++) {
             avgtime[j] = avgtime[j] + times[j][k];
             mintime[j] = MIN(mintime[j], times[j][k]);
             maxtime[j] = MAX(maxtime[j], times[j][k]);
             }
         }
         printf("Function    Best Rate MB/s  Avg time     Min time     Max time     Bytes\n");
-        for (int j=0; j<3; j++) {
+        for (int j=0; j<6; j++) {
             avgtime[j] = avgtime[j]/(double)(NTIMES-1);
-
+            if(j<2){
             printf("%s%12.1f  %11.6f  %11.6f  %11.6f  %f\n", label[j],
                1.0E-06 * bytes[j]/mintime[j],
                avgtime[j],
                mintime[j],
                maxtime[j],
                 bytes[j]);
+            }else{ //consider how many times the operation was performed
+               printf("%s%12.1f  %11.6f  %11.6f  %11.6f  %f\n", label[j],
+               1.0E-06* num_copy * bytes[j]/mintime[j],
+               avgtime[j]/num_copy,
+               mintime[j]/num_copy,
+               maxtime[j]/num_copy,
+                bytes[j]);
+     
+            }
         }
         
         printf(HLINE);
