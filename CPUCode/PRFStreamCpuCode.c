@@ -109,14 +109,23 @@ int main(int argc, char *argv[])
                 num_copy=atoi(argv[2]);
             }
            }
-        int sizeBytes = size * sizeof(int64_t);
-        int64_t *a = malloc(sizeBytes);
-        int64_t *b = malloc(sizeBytes);
-        int64_t *c = malloc(sizeBytes);
-        int64_t *aOut = malloc(sizeBytes);
-        int64_t *bOut = malloc(sizeBytes);
-        int64_t *cOut = malloc(sizeBytes);
-        
+        // Int 64
+        //int sizeBytes = size * sizeof(int64_t);
+       // int64_t *a = malloc(sizeBytes);
+        //int64_t *b = malloc(sizeBytes);
+        //int64_t *c = malloc(sizeBytes);
+        //int64_t *aOut = malloc(sizeBytes);
+        //int64_t *bOut = malloc(sizeBytes);
+        //int64_t *cOut = malloc(sizeBytes);
+        //double 
+        int sizeBytes = size * sizeof(STREAM_TYPE);
+        STREAM_TYPE *a = malloc(sizeBytes);
+        STREAM_TYPE *b = malloc(sizeBytes);
+        STREAM_TYPE *c = malloc(sizeBytes);
+        STREAM_TYPE *aOut = malloc(sizeBytes);
+        STREAM_TYPE *bOut = malloc(sizeBytes);
+        STREAM_TYPE *cOut = malloc(sizeBytes);
+
         double		t, times[6][NTIMES];
 
         // Generate input data

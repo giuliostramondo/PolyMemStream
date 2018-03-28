@@ -34,7 +34,7 @@ public class PRFStreamManager {
 
 	private static EngineInterface interfaceDefault() {
 		EngineInterface engine_interface = new EngineInterface();
-		CPUTypes   type = CPUTypes.INT64;
+		CPUTypes   type = CPUTypes.DOUBLE;
 		int        size = type.sizeInBytes();
         int p = PRFConstants.p;
         int q = PRFConstants.q;
@@ -68,7 +68,7 @@ InterfaceParam inN = (PRFMODE === PRFStreamKernel.PRFMode.LOAD.ordinal())? N:0;
 		manager.setEnableStreamStatusBlocks(true);
 		BuildConfig buildConfig = manager.getBuildConfig();
 		//buildConfig.setMPPRCostTableSearchRange(params.getMPPRStartCT(), params.getMPPREndCT());
-		buildConfig.setMPPRCostTableSearchRange(1, 4);
+		buildConfig.setMPPRCostTableSearchRange(1, 20);
 		buildConfig.setMPPRParallelism(4);
 		buildConfig.setMPPRRetryNearMissesThreshold(params.getMPPRRetryThreshold());
 	}

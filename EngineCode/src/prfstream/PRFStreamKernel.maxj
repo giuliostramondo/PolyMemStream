@@ -16,13 +16,14 @@
  
  class PRFStreamKernel extends Kernel {
  
-    static public final DFEType type = dfeInt(64);
+    //static public final DFEType type = dfeInt(64);
+    static public final DFEType type = dfeFloat(11,53);
     static public final DFEType prf_input_type = dfeUInt(64);
      static public DFEVectorType<DFEVar> interleavedFloatType = new DFEVectorType<DFEVar>( type, PRFConstants.p*PRFConstants.q ) ;
      static final    int p = PRFConstants.p;
      static final    int q = PRFConstants.q;
  
-     static final int loop_delay=15;
+     static final int loop_delay=43;
       public DFEStructType prf_inputs,prf_outputs;
      //
      //Need the follwing modes:
@@ -379,7 +380,7 @@
          //Debugging
           debug.simPrintf("tick %d input: %d %d %d | %d %d %d:",controls.iterationCounter, controls.readingA(),controls.readingB(),controls.readingC(), controls.outputA(), controls.outputB(),controls.outputC());
          for(int i =0;i<p*q;i++)
-             debug.simPrintf("%d ",prf_input_data[i]);
+             debug.simPrintf("%f ",prf_input_data[i]);
          debug.simPrintf("\n");
          debug.simPrintf("RowIndex: %d, ColumnIndex: %d, AccType:%d, WriteEnable: %d\n",PRFInputs.get("RowIndex").cast(dfeInt(64)), PRFInputs.get("ColumnIndex").cast(dfeInt(64)), PRFInputs.get("AccType").cast(dfeInt(64)),PRFInputs.get("WriteEnable").cast(dfeInt(64)));
          debug.simPrintf("RowIndexRead0: %d, ColumnIndexRead0: %d, AccTypeRead0:%d\n",PRFInputs.get("index_i_read_0").cast(dfeInt(64)), PRFInputs.get("index_j_read_0").cast(dfeInt(64)), PRFInputs.get("acc_type_read_0").cast(dfeInt(64)));
@@ -388,7 +389,7 @@
  
          Hashtable<String, DFEVector<DFEVar>> prfMultiportOut = Utils.polyMem_multiport(this,PRFInputs,prf_input_data);
  
-         optimization.pushPipeliningFactor(0.0);
+         //optimization.pushPipeliningFactor(0.0);
         DFEVector<DFEVar> prfOutput1=prfMultiportOut.get("o_P_0");
         DFEVector<DFEVar> prfOutput2=prfMultiportOut.get("o_P_1");
 
@@ -407,15 +408,15 @@
         prf_input_data_loopback <== control.mux(select,PRF_op_res_list);
         //prf_input_data_loopback <== PRF_op_result;
 
-        optimization.popPipeliningFactor () ;
+        //optimization.popPipeliningFactor () ;
  
          debug.simPrintf("prf out port 1: ");
          for(int i =0;i<p*q;i++)
-             debug.simPrintf("%d ",prfOutput1[i]);
+             debug.simPrintf("%f ",prfOutput1[i]);
          //DFEVector<DFEVar> prfOutput1=prfMultiportOut.get("o_P_1");
          debug.simPrintf("   prf out port 2: ");
          for(int i =0;i<8;i++)
-             debug.simPrintf("%d ",prfOutput2[i]);
+             debug.simPrintf("%f ",prfOutput2[i]);
  
          debug.simPrintf("\n");
  
