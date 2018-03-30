@@ -261,13 +261,13 @@
              debug.simPrintf("schedule: %x,accType: %d, i : %d, j : %d , mask : %d\n",schedule,accType_compute, i,j,mask);
              DFEVar rowIndex_copy_read= (scheduleSize > 0 )? i : (copy_elementCounter*this.lanes/PRFConstants.M);
              DFEVar columnIndex_copy_read=(scheduleSize>0) ? j : KernelMath.modulo(copy_elementCounter*this.lanes,PRFConstants.M).cast(dfeUInt(64));           
-             
              //DFEVar rowIndex_copy_write= copy_elementCounter===0 ? zeroDfevar : stream.offset(rowIndex_copy_read,-1)+340;//added C vector offset
              //DFEVar columnIndex_copy_write= copy_elementCounter===0 ? zeroDfevar : stream.offset(columnIndex_copy_read,-1);
              //DFEVar writeEnable_copy = copy_elementCounter===0 ? zeroDfevar : kernel.constant.var(0xFFFFFFF).cast(dfeUInt(64));  
  
              DFEVar rowIndex_copy_write= stream.offset(rowIndex_copy_read,-loop_delay)+340;//added C vector offset
              DFEVar columnIndex_copy_write= stream.offset(columnIndex_copy_read,-loop_delay);
+             DFEVar accType_copy = stream.offset(accType_compute,-loop_delay); 
              //DFEVar writeEnable_copy = kernel.constant.var(0xFFFFFFF).cast(dfeUInt(64));            
              DFEVar writeEnable_copy = stream.offset(mask,-loop_delay);            
  
@@ -275,7 +275,7 @@
              PRFInputs_copy["RowIndex"]<==rowIndex_copy_write;
              PRFInputs_copy["ColumnIndex"]<==columnIndex_copy_write;
              PRFInputs_copy["WriteEnable"]<==writeEnable_copy;
-             PRFInputs_copy["AccType"]<==accType_compute;
+             PRFInputs_copy["AccType"]<==accType_copy;
              PRFInputs_copy["Mask"]<==mask;
    
              // Copy read port one inputs
@@ -296,7 +296,7 @@
             PRFInputs_scalar["RowIndex"]<==stream.offset(rowIndex_copy_read,-loop_delay)+170;//added offset for b vector.
             PRFInputs_scalar["ColumnIndex"]<==columnIndex_copy_write;
             PRFInputs_scalar["WriteEnable"]<==writeEnable_copy;
-            PRFInputs_scalar["AccType"]<==accType_compute;
+            PRFInputs_scalar["AccType"]<==accType_copy;
             PRFInputs_scalar["Mask"]<==mask;
   
             // Scale read port one inputs
@@ -319,7 +319,7 @@
             PRFInputs_add["RowIndex"]<==rowIndex_copy_write;
             PRFInputs_add["ColumnIndex"]<==columnIndex_copy_write;
             PRFInputs_add["WriteEnable"]<==mask;
-            PRFInputs_add["AccType"]<==accType_compute;
+            PRFInputs_add["AccType"]<==accType_copy;
             PRFInputs_add["Mask"]<==mask;
   
             // ADD read port one inputs
@@ -342,7 +342,7 @@
             PRFInputs_triad["RowIndex"]<==stream.offset(rowIndex_copy_read,-loop_delay);//write in A
             PRFInputs_triad["ColumnIndex"]<==columnIndex_copy_write;
             PRFInputs_triad["WriteEnable"]<==mask;
-            PRFInputs_triad["AccType"]<==accType_compute;
+            PRFInputs_triad["AccType"]<==accType_copy;
             PRFInputs_triad["Mask"]<==mask;
   
             // TRIAD read port one inputs

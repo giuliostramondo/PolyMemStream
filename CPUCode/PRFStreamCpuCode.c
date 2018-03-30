@@ -9,6 +9,9 @@
 #include "Maxfiles.h"
 #include "MaxSLiCInterface.h"
 
+#include "schedule_utils.h"
+#include "tests.h"
+
 #define    LOAD 0
 #define    OFFLOAD 1
 #define    COPY 2
@@ -84,12 +87,29 @@ struct timezone { int   tz_minuteswest;
 #define p 2 
 #define q 4
 
+#define TEST 1
+
 int main(int argc, char *argv[])
 {
+        if(TEST)
+            test_STREAM();
+
+        int schedule_len = 0;
+        Schedule *s = NULL;
+        if(argc > 1 ){
+            char *scheduleFile = argv[1];
+            schedule_len = getFileLenght(scheduleFile);
+            s = parseSchedule(scheduleFile);
+        }
+
         int size = STREAM_ARRAY_SIZE;
         int num_copy=1;
         int scheduleROMsize=(M*N/p*q);
-        int *scheduleROM=malloc(scheduleROMsize*sizeof(int));
+        int *scheduleROM=NULL;
+        if (s != FILE_NOT_FOUND)
+            scheduleROM = compress_schedule_toROM(s,schedule_len,p*q,scheduleROMsize);
+        else
+            scheduleROM = malloc(scheduleROMsize*sizeof(int));
         FILE *fp;
         if( access( "stream_output.csv", F_OK ) != -1 ) {
             fp  =fopen("stream_output.csv","a");//if file exists append results to existing csv (do not write header)
@@ -147,7 +167,7 @@ int main(int argc, char *argv[])
         prfStreamInput.param_VEC_SIZE=size;
         prfStreamInput.param_copy_repeats= num_copy;
         prfStreamInput.param_prfMode=LOAD;
-        prfStreamInput.param_scheduleROMsize=scheduleROMsize;
+        //Do not use the schedule for loading/Offloading
         prfStreamInput.param_scheduleROMsize=0;
         prfStreamInput.instream_aStream=a;
         prfStreamInput.instream_bStream=b;
@@ -193,9 +213,10 @@ int main(int argc, char *argv[])
                 printf("Errors were found during loading/offloading\n");
                 times[1][k] = -1;//Setting time to -1 to signal that an error happened
             }
+            //Use the schedule (if provided) to run the STREAM kernel
+            prfStreamInput.param_scheduleROMsize=schedule_len;
             printf("Copy benchmark ... \n");
             prfStreamInput.param_prfMode=COPY;
-            prfStreamInput.param_scheduleROMsize=0;
             times[2][k] = mysecond();
             PRFStream_run(StreamDFE,&prfStreamInput);
             times[2][k] =( mysecond() - times[2][k]);
