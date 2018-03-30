@@ -228,9 +228,12 @@ int test_STREAM_sparse(){
     PRFStream_run(StreamDFE,&prfStreamInput);
     scheduleROM[0]=0x02000155;
     prfStreamInput.param_scheduleROMsize=1;
+    prfStreamInput.param_copy_repeats= 1;
     prfStreamInput.param_prfMode=COPY;
     PRFStream_run(StreamDFE,&prfStreamInput);
-
+    
+    
+    prfStreamInput.param_scheduleROMsize=0;
     prfStreamInput.param_prfMode=OFFLOAD;
     PRFStream_run(StreamDFE,&prfStreamInput);
 
@@ -253,7 +256,8 @@ int test_STREAM_sparse(){
 
 
 int test_STREAM_sparse_with_schedule(){
-    int sizeBytes = STREAM_ARRAY_SIZE * sizeof(double);
+
+    int sizeBytes = 87040 * sizeof(double);
     double *a = malloc(sizeBytes);
     double *b = malloc(sizeBytes);
     double *c = malloc(sizeBytes);
@@ -261,11 +265,19 @@ int test_STREAM_sparse_with_schedule(){
     double *bOut = malloc(sizeBytes);
     double *cOut = malloc(sizeBytes);
 
-    int64_t * scheduleROM = malloc(512*512/8*sizeof(int64_t));
-    for(int i=0;i<512*512/8;i++)
-        scheduleROM[i]=0;
+
+    char *scheduleFile= "europar_polymem_30percent_solution_RoCo.schedule";
+    Schedule *s = parseSchedule(scheduleFile);
+        printf("here");
+    int schedule_len = getFileLenght(scheduleFile);
+        printf("here2");
+
+    if (s==FILE_NOT_FOUND) {
+        printf("FILE_NOT_FOUND");
+    }
+    int64_t * scheduleROM = compress_schedule_toROM(s,schedule_len,8,512*512/8); 
     // Generate input data
-    for(int i = 0; i < STREAM_ARRAY_SIZE; ++i) {
+    for(int i = 0; i < 87040; ++i) {
             a[i] = i;
             b[i] = 1;
             c[i] = -1;
@@ -289,16 +301,19 @@ int test_STREAM_sparse_with_schedule(){
     max_engine_t* StreamDFE=max_load(StreamMaxFile,"*");
 
     PRFStream_run(StreamDFE,&prfStreamInput);
-    scheduleROM[0]=0x02000155;
-    prfStreamInput.param_scheduleROMsize=1;
+    
+    printf("START COPY SPARSE with schedule");
+    prfStreamInput.param_scheduleROMsize=schedule_len;
     prfStreamInput.param_prfMode=COPY;
     PRFStream_run(StreamDFE,&prfStreamInput);
 
+    printf("END COPY SPARSE with schedule");
+    prfStreamInput.param_scheduleROMsize=0;
     prfStreamInput.param_prfMode=OFFLOAD;
     PRFStream_run(StreamDFE,&prfStreamInput);
 
     int error=0;
-    for(int i = 0; i < STREAM_ARRAY_SIZE; ++i){
+    for(int i = 0; i < 87040; ++i){
         if( i == 1 || i == 3 || i == 5 || i== 7){
             if(cOut[i]!=aOut[i])
                 error=1;
@@ -307,14 +322,14 @@ int test_STREAM_sparse_with_schedule(){
                 error=1;
         }
         if(VERBOSE){
-                printf("COPY SPARSE DUMP id : %d -> %f , %f , %f , %f , %f , %f \n",i,a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                printf("COPY SPARSE with schedule DUMP id : %d -> %f , %f , %f , %f , %f , %f \n",i,a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
         }
     }
     max_unload(StreamDFE);
     return error;
 
 }
-#define TESTNB 6
+#define TESTNB 7
 int test_STREAM(){
     int error = 0;
     Testsuite stream_tests[TESTNB];
@@ -336,6 +351,9 @@ int test_STREAM(){
 
     stream_tests[5].function = test_STREAM_sparse;
     stream_tests[5].name = "STREAM sparse";
+
+    stream_tests[6].function = test_STREAM_sparse_with_schedule;
+    stream_tests[6].name = "STREAM sparse with schedule";
 
     error = run_testsuite(stream_tests, TESTNB);
     return error;
