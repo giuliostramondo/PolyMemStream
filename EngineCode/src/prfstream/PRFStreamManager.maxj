@@ -41,15 +41,18 @@ public class PRFStreamManager {
 		InterfaceParam  N    = engine_interface.addParam("VEC_SIZE", CPUTypes.INT64);
 		InterfaceParam  PRFMODE    = engine_interface.addParam("prfMode", CPUTypes.INT64);
 		InterfaceParam  copyRepeats= engine_interface.addParam("copy_repeats", CPUTypes.INT64);
+		InterfaceParam  scheduleROMsize= engine_interface.addParam("scheduleROMsize", CPUTypes.INT64);
 
 		engine_interface.setScalar(s_kernelName, "vectorSize", N);
 		engine_interface.setScalar(s_kernelName, "prfMode", PRFMODE);
 		engine_interface.setScalar(s_kernelName, "copy_repeats", copyRepeats);
+		engine_interface.setScalar(s_kernelName, "scheduleROMsize", scheduleROMsize);
 
 
+        InterfaceParam compute_ticks = (scheduleROMsize > 0)? copyRepeats*(scheduleROMsize+PRFStreamKernel.loop_delay):copyRepeats*(N/(p*q)+PRFStreamKernel.loop_delay);
         InterfaceParam ticks = (PRFMODE === PRFStreamKernel.PRFMode.OFFLOAD.ordinal() | PRFMODE === PRFStreamKernel.PRFMode.LOAD.ordinal())?
-            3*N/(p*q) : copyRepeats*(N/(p*q)+PRFStreamKernel.loop_delay);
-InterfaceParam inN = (PRFMODE === PRFStreamKernel.PRFMode.LOAD.ordinal())? N:0;
+            3*N/(p*q) : compute_ticks;
+    InterfaceParam inN = (PRFMODE === PRFStreamKernel.PRFMode.LOAD.ordinal())? N:0;
 		engine_interface.setTicks(s_kernelName, ticks);
 		engine_interface.setStream("aStream",   type, inN * size);
 		engine_interface.setStream("bStream",   type, inN * size);

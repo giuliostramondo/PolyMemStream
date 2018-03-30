@@ -198,6 +198,22 @@ class Utils extends Kernel {
 
         return tmp;
     }
+    
+    static DFEVar CreateBitwiseDeMux(int N,DFEVar input, DFEVar select_v_input[][], DFEVar select_h_input[][] ){
+        Kernel prf_kernel = input.getKernel();
+        DFEVar tmp = prf_kernel.constant.var(0).cast(dfeUInt(N));
+        DFEVar select[] = new DFEVar[p*q];
+        for(int i=0;i<p;i++){
+            for(int j=0;j<q;j++){
+             select[i*q+j]= select_v_input[i][j]*q+ select_h_input[i][j];
+            }
+        }
+        for(int i=0;i<N;i++){
+            tmp=((input.rotateLeft(select[i].cast(dfeUInt(4)))&0x1)<<i)|tmp;
+        }
+        return tmp;
+    }
+
 
     static DFEVar[][] CreateDeMux_2d(int N,int p, int q, DFEVar inputs[], DFEVar select[]){
         DFEVar tmp[][] = new DFEVar[p][q];
@@ -880,6 +896,7 @@ class Utils extends Kernel {
         DFEVar inv_reordering_signal_j[][];
         DFEVar reordered_in_memory_addr[];
         DFEVar reordered_input_data_arr[];
+        DFEVar reordered_write_enable=write_enable;//initialize
         reordering_signal_i= Utils.MBlock_i(aguOutput);
         reordering_signal_j = Utils.MBlock_j(aguOutput);
         DFEVar[][] input_data_arr = new DFEVar[p][q];
@@ -898,6 +915,7 @@ class Utils extends Kernel {
         }else{
             reordered_in_memory_addr = Utils.Inv_Crossbar(in_memory_addr, reordering_signal_i, reordering_signal_j);
             reordered_input_data_arr = Utils.Inv_Crossbar(input_data_arr, reordering_signal_i, reordering_signal_j);
+            reordered_write_enable = Utils.CreateBitwiseDeMux(p*q,write_enable,reordering_signal_i,reordering_signal_j);
         }
 
         //handling read paths
@@ -933,7 +951,7 @@ class Utils extends Kernel {
                 DFEVar mem_out[][];
                 DFEVar output_[];
                 DFEVector<DFEVar> output = PRFStreamKernel.interleavedFloatType.newInstance( kernel) ;
-                mem_out=Utils.parallelMemories_IND_R_W(write_enable, reordered_input_data_arr, reordered_in_memory_addr,reordered_in_memory_addr_read);
+                mem_out=Utils.parallelMemories_IND_R_W(reordered_write_enable, reordered_input_data_arr, reordered_in_memory_addr,reordered_in_memory_addr_read);
                 output_ = Utils.Crossbar(mem_out, reordering_signal_i_read, reordering_signal_j_read);
                 for(int i =0; i<p*q;i++){
                         output[i].connect( output_[i]);

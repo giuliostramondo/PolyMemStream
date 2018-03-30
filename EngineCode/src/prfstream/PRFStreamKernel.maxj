@@ -11,6 +11,7 @@
  import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEVector ;
  import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEStruct;
  import com.maxeler.maxcompiler.v2.kernelcompiler.types.composite.DFEStructType;
+ import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.memory.Memory;
  import java.util.*;
  
  
@@ -22,6 +23,7 @@
      static public DFEVectorType<DFEVar> interleavedFloatType = new DFEVectorType<DFEVar>( type, PRFConstants.p*PRFConstants.q ) ;
      static final    int p = PRFConstants.p;
      static final    int q = PRFConstants.q;
+     static int MEMORY_ADDRESS_SIZE = PRFConstants.MEMORY_ADDRESS_SIZE; //log_2 of MEMORY_DEPTH;
  
      static final int loop_delay=43;
       public DFEStructType prf_inputs,prf_outputs;
@@ -71,14 +73,16 @@
          private final DFEVar isTrue, isFalse ;
          private final DFEVar iterationCounter;
          private final DFEVar copyRepeats;
+         private final DFEVar scheduleSize;
          private final int lanes= PRFConstants.p*PRFConstants.q;
-         Controls (Kernel kernel, DFEVar _prfMode, DFEVar _vectorSize, DFEVar _copyRepeats){
+         Controls (Kernel kernel, DFEVar _prfMode, DFEVar _vectorSize, DFEVar _copyRepeats, DFEVar _scheduleSize){
              this.isTrue = kernel.constant.var( dfeUInt(1), 1 ) ;
              this.isFalse = kernel.constant.var( dfeUInt(1), 0 ) ;
  
              this.prfMode = _prfMode;
              this.vectorSize = _vectorSize;
              this.copyRepeats=_copyRepeats;
+             this.scheduleSize=_scheduleSize;
  
              DFEVar total_iterations;
              DFEVar load_or_offload=((this.prfMode === PRFMode.LOAD.ordinal()) | (this.prfMode === PRFMode.OFFLOAD.ordinal()));
@@ -90,9 +94,10 @@
              prf_inputs = new DFEStructType(
                                      DFEStructType.sft("RowIndex",prf_input_type),
                                      DFEStructType.sft("ColumnIndex",prf_input_type),
-                                     DFEStructType.sft("WriteEnable",prf_input_type),
+                                     DFEStructType.sft("WriteEnable",dfeUInt(p*q)),
                                      DFEStructType.sft("AccType",prf_input_type),
- 
+                                     DFEStructType.sft("Mask",dfeUInt(p*q)),
+                                      
                                      // Load module read dummy inputs
                                      DFEStructType.sft("index_i_read_0",prf_input_type),
                                      DFEStructType.sft("index_j_read_0",prf_input_type),
@@ -132,6 +137,7 @@
              DFEVar outputA_ifOffload = this.iterationCounter< (this.vectorSize/(p*q))? this.isTrue:this.isFalse;
              DFEVar outputA_ifLoad = (this.iterationCounter > ((3 *this.vectorSize/(p*q)) - 3));
              DFEVar outputA_ifCompute = (this.iterationCounter > (this.copyRepeats*(this.vectorSize/(p*q)))+loop_delay-3);
+             outputA_ifCompute =(this.scheduleSize>0)? (this.iterationCounter > (this.copyRepeats*((this.scheduleSize))+loop_delay)-3):outputA_ifCompute;
              DFEVar outputA_flag = outputA_ifLoad;
              outputA_flag = ((this.prfMode === PRFMode.OFFLOAD.ordinal()) ? outputA_ifOffload : outputA_flag);
              //outputA_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputA_ifCompute : outputA_flag);
@@ -145,6 +151,7 @@
                  ? this.isTrue:this.isFalse;
              DFEVar outputB_ifLoad = (this.iterationCounter > ((3 *this.vectorSize/(p*q)) - 3));
              DFEVar outputB_ifCompute = (this.iterationCounter > (this.copyRepeats*(this.vectorSize/(p*q)))+loop_delay-3);
+             outputB_ifCompute =(this.scheduleSize>0)? (this.iterationCounter > (this.copyRepeats*((this.scheduleSize))+loop_delay)-3):outputB_ifCompute;
              DFEVar outputB_flag = outputB_ifLoad;
              outputB_flag = ((this.prfMode === PRFMode.OFFLOAD.ordinal()) ? outputB_ifOffload : outputB_flag);
              //outputB_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputB_ifCompute : outputB_flag);
@@ -158,6 +165,7 @@
                  ? this.isTrue:this.isFalse;
              DFEVar outputC_ifLoad = (this.iterationCounter > ((3 *this.vectorSize/(p*q)) - 3));
              DFEVar outputC_ifCompute = (this.iterationCounter > (this.copyRepeats*((this.vectorSize/(p*q)))+loop_delay)-3);
+             outputC_ifCompute =(this.scheduleSize>0)? (this.iterationCounter > (this.copyRepeats*((this.scheduleSize))+loop_delay)-3):outputC_ifCompute;
              DFEVar outputC_flag = outputC_ifLoad;
              outputC_flag = ((this.prfMode === PRFMode.OFFLOAD.ordinal()) ? outputC_ifOffload : outputC_flag);
              //outputC_flag = ((this.prfMode === PRFMode.COPY.ordinal()) ? outputC_ifCompute: outputC_flag);
@@ -179,8 +187,9 @@
              DFEVar rowIndex_loadoffload=(elementCounter*this.lanes/PRFConstants.M)+(vector_id*170);
              DFEVar columnIndex_loadoffload=KernelMath.modulo(elementCounter*this.lanes,PRFConstants.M).cast(dfeUInt(64));
              DFEVar accType = kernel.constant.var(1).cast(dfeUInt(64));//ROW shape
-             DFEVar writeEn =  kernel.constant.var(0xFFFFFFF).cast(dfeUInt(64));
+             DFEVar writeEn =  kernel.constant.var(0xFFFFFFF).cast(dfeUInt(p*q));
              DFEVar zeroDfevar = kernel.constant.var(0).cast(dfeUInt(64));
+             DFEVar writeDisable = kernel.constant.var(0).cast(dfeUInt(p*q));
              DFEVar oneDfevar = kernel.constant.var(1).cast(dfeUInt(64));
              DFEVar rowIndex_i_read_0 = kernel.constant.var(0);
              DFEVar rowIndex_j_read_0 = kernel.constant.var(0);
@@ -194,6 +203,7 @@
              PRFInputs_load["ColumnIndex"]<==columnIndex_loadoffload;
              PRFInputs_load["WriteEnable"]<==writeEn;
              PRFInputs_load["AccType"]<==accType;
+             PRFInputs_load["Mask"]<==writeEn; //Set all mask bits to 1
  
              // Load module read dummy inputs
              PRFInputs_load["index_i_read_0"]<==zeroDfevar;
@@ -212,8 +222,9 @@
              //Dummy write inputs
              PRFInputs_offload["RowIndex"]<==zeroDfevar;
              PRFInputs_offload["ColumnIndex"]<==zeroDfevar;
-             PRFInputs_offload["WriteEnable"]<==zeroDfevar;
+             PRFInputs_offload["WriteEnable"]<==writeDisable;
              PRFInputs_offload["AccType"]<==oneDfevar;
+             PRFInputs_offload["Mask"]<==writeEn;
  
              // Useful read port 1 inputs
              PRFInputs_offload["index_i_read_0"]<==rowIndex_loadoffload;
@@ -229,10 +240,27 @@
  
              //Prepare input for the copy mode
              DFEStruct PRFInputs_copy = prf_inputs.newInstance(kernel);
+             //TODO Try to reduce the bitwidth of the mappedSchedule memory
+             //The size of the mappedSchedule ROM is in the worst case scenario the number of memory accesses needed to read
+             //all the content of PolyMem. PolyMem stores N*M elements, dividing this by the number of lanes gives the 
+             //worst case scenario scheduleROM size.
+             Memory<DFEVar> mappedSchedule= mem.alloc(dfeUInt(32), PRFConstants.M*PRFConstants.N/this.lanes);
+             // The ScheduleROM is intialized on the CPU side.
+             mappedSchedule.mapToCPU("ScheduleROM");
+             // Each element in the mapped schedule is 32 bit split as follow 
+             // <   4 MSB not used | accType (3 bits) | i (8 bits ) |j ( 9 bits ) |mask ( 8 bits )>
+             
              CounterChain copy_counter_chain = kernel.control.count.makeCounterChain( (this.isTrue) );
              DFEVar copy_elementCounter = copy_counter_chain.addCounter(this.vectorSize/this.lanes,1);
-             DFEVar rowIndex_copy_read=(copy_elementCounter*this.lanes/PRFConstants.M);
-             DFEVar columnIndex_copy_read=KernelMath.modulo(copy_elementCounter*this.lanes,PRFConstants.M).cast(dfeUInt(64));           
+             DFEVar schedule = mappedSchedule.read(copy_elementCounter.cast(dfeUInt(MEMORY_ADDRESS_SIZE)));
+             //If schedule size is 0 default to processing the whole vector (previous STREAM implementaton ).
+             DFEVar mask = (scheduleSize > 0)? schedule.slice(0,8).cast(dfeUInt(p*q)): writeEn;
+             DFEVar j= schedule.slice(8,9).cast(dfeUInt(9)).cast(dfeUInt(64));
+             DFEVar i= schedule.slice(17,8).cast(dfeUInt(8)).cast(dfeUInt(64));
+             DFEVar accType_compute = (scheduleSize >0 ) ? schedule.slice(25,3).cast(dfeUInt(3)).cast(dfeUInt(64)) : oneDfevar;
+             debug.simPrintf("schedule: %x,accType: %d, i : %d, j : %d , mask : %d\n",schedule,accType_compute, i,j,mask);
+             DFEVar rowIndex_copy_read= (scheduleSize > 0 )? i : (copy_elementCounter*this.lanes/PRFConstants.M);
+             DFEVar columnIndex_copy_read=(scheduleSize>0) ? j : KernelMath.modulo(copy_elementCounter*this.lanes,PRFConstants.M).cast(dfeUInt(64));           
              
              //DFEVar rowIndex_copy_write= copy_elementCounter===0 ? zeroDfevar : stream.offset(rowIndex_copy_read,-1)+340;//added C vector offset
              //DFEVar columnIndex_copy_write= copy_elementCounter===0 ? zeroDfevar : stream.offset(columnIndex_copy_read,-1);
@@ -240,44 +268,46 @@
  
              DFEVar rowIndex_copy_write= stream.offset(rowIndex_copy_read,-loop_delay)+340;//added C vector offset
              DFEVar columnIndex_copy_write= stream.offset(columnIndex_copy_read,-loop_delay);
-             DFEVar writeEnable_copy = kernel.constant.var(0xFFFFFFF).cast(dfeUInt(64));            
+             //DFEVar writeEnable_copy = kernel.constant.var(0xFFFFFFF).cast(dfeUInt(64));            
+             DFEVar writeEnable_copy = stream.offset(mask,-loop_delay);            
  
              // Copy write inputs
              PRFInputs_copy["RowIndex"]<==rowIndex_copy_write;
              PRFInputs_copy["ColumnIndex"]<==columnIndex_copy_write;
              PRFInputs_copy["WriteEnable"]<==writeEnable_copy;
-             PRFInputs_copy["AccType"]<==oneDfevar;
+             PRFInputs_copy["AccType"]<==accType_compute;
+             PRFInputs_copy["Mask"]<==mask;
    
              // Copy read port one inputs
              PRFInputs_copy["index_i_read_0"]<==rowIndex_copy_read;
              PRFInputs_copy["index_j_read_0"]<==columnIndex_copy_read;
-             PRFInputs_copy["acc_type_read_0"]<==oneDfevar;
+             PRFInputs_copy["acc_type_read_0"]<==accType_compute;
  
              //Dummy read port 2 inputs
              PRFInputs_copy["index_i_read_1"]<==zeroDfevar;
              PRFInputs_copy["index_j_read_1"]<==zeroDfevar;
-             PRFInputs_copy["acc_type_read_1"]<==oneDfevar;
+             PRFInputs_copy["acc_type_read_1"]<==zeroDfevar;
  
              PRFInputs_list.add(PRFInputs_copy);
 
             //PRFInputs for scale are the same as for COPY
-            //TODO Actually is b= scalar*c
             DFEStruct PRFInputs_scalar = prf_inputs.newInstance(kernel);
-            // Copy write inputs
+            // Scale write inputs
             PRFInputs_scalar["RowIndex"]<==stream.offset(rowIndex_copy_read,-loop_delay)+170;//added offset for b vector.
             PRFInputs_scalar["ColumnIndex"]<==columnIndex_copy_write;
             PRFInputs_scalar["WriteEnable"]<==writeEnable_copy;
-            PRFInputs_scalar["AccType"]<==oneDfevar;
+            PRFInputs_scalar["AccType"]<==accType_compute;
+            PRFInputs_scalar["Mask"]<==mask;
   
-            // Copy read port one inputs
+            // Scale read port one inputs
             PRFInputs_scalar["index_i_read_0"]<==rowIndex_copy_read+340;//added offset for c vector.
             PRFInputs_scalar["index_j_read_0"]<==columnIndex_copy_read;
-            PRFInputs_scalar["acc_type_read_0"]<==oneDfevar;
+            PRFInputs_scalar["acc_type_read_0"]<==accType_compute;
 
             //Dummy read port 2 inputs
             PRFInputs_scalar["index_i_read_1"]<==zeroDfevar;
             PRFInputs_scalar["index_j_read_1"]<==zeroDfevar;
-            PRFInputs_scalar["acc_type_read_1"]<==oneDfevar;
+            PRFInputs_scalar["acc_type_read_1"]<==zeroDfevar;
 
             PRFInputs_list.add(PRFInputs_scalar);
 
@@ -285,21 +315,22 @@
             DFEStruct PRFInputs_add = prf_inputs.newInstance(kernel);
             //everything is exactly as the copy except read port1 that has the B vector offset.           
 
-            // Copy write inputs
+            // ADD write inputs
             PRFInputs_add["RowIndex"]<==rowIndex_copy_write;
             PRFInputs_add["ColumnIndex"]<==columnIndex_copy_write;
-            PRFInputs_add["WriteEnable"]<==writeEnable_copy;
-            PRFInputs_add["AccType"]<==oneDfevar;
+            PRFInputs_add["WriteEnable"]<==mask;
+            PRFInputs_add["AccType"]<==accType_compute;
+            PRFInputs_add["Mask"]<==mask;
   
-            // Copy read port one inputs
+            // ADD read port one inputs
             PRFInputs_add["index_i_read_0"]<==rowIndex_copy_read;
             PRFInputs_add["index_j_read_0"]<==columnIndex_copy_read;
-            PRFInputs_add["acc_type_read_0"]<==oneDfevar;
+            PRFInputs_add["acc_type_read_0"]<==accType_compute;
 
-            //Dummy read port 2 inputs
+            // ADD write port one inputs
             PRFInputs_add["index_i_read_1"]<==rowIndex_copy_read+170;
             PRFInputs_add["index_j_read_1"]<==columnIndex_copy_read;
-            PRFInputs_add["acc_type_read_1"]<==oneDfevar;
+            PRFInputs_add["acc_type_read_1"]<==accType_compute;
 
             PRFInputs_list.add(PRFInputs_add);
 
@@ -307,21 +338,22 @@
             DFEStruct PRFInputs_triad = prf_inputs.newInstance(kernel);
             //everything is exactly as the copy except read port1 that has the B vector offset.           
 
-            // Copy write inputs
+            // TRIAD write inputs
             PRFInputs_triad["RowIndex"]<==stream.offset(rowIndex_copy_read,-loop_delay);//write in A
             PRFInputs_triad["ColumnIndex"]<==columnIndex_copy_write;
-            PRFInputs_triad["WriteEnable"]<==writeEnable_copy;
-            PRFInputs_triad["AccType"]<==oneDfevar;
+            PRFInputs_triad["WriteEnable"]<==mask;
+            PRFInputs_triad["AccType"]<==accType_compute;
+            PRFInputs_triad["Mask"]<==mask;
   
-            // Copy read port one inputs
+            // TRIAD read port one inputs
             PRFInputs_triad["index_i_read_0"]<==rowIndex_copy_read+170;//Read B
             PRFInputs_triad["index_j_read_0"]<==columnIndex_copy_read;
-            PRFInputs_triad["acc_type_read_0"]<==oneDfevar;
+            PRFInputs_triad["acc_type_read_0"]<==accType_compute;
 
-            //Dummy read port 2 inputs
+            // TRIAD write port one inputs
             PRFInputs_triad["index_i_read_1"]<==rowIndex_copy_read+340;//Read C
             PRFInputs_triad["index_j_read_1"]<==columnIndex_copy_read;
-            PRFInputs_triad["acc_type_read_1"]<==oneDfevar;
+            PRFInputs_triad["acc_type_read_1"]<==accType_compute;
 
             PRFInputs_list.add(PRFInputs_triad); 
              //Select correct input based on prfmode
@@ -363,8 +395,9 @@
          DFEVar vectorSize = io.scalarInput("vectorSize", dfeUInt(64));
          DFEVar prfMode = io.scalarInput("prfMode", type);
          DFEVar copyRepeats = io.scalarInput("copy_repeats", dfeUInt(64));
-         
-         Controls controls = new Controls( this, prfMode, vectorSize,copyRepeats);
+         DFEVar scheduleSize = io.scalarInput("scheduleROMsize", dfeUInt(64));
+
+         Controls controls = new Controls( this, prfMode, vectorSize,copyRepeats, scheduleSize);
          Inputs inputs = new Inputs( this, controls);
          Outputs outputs = new Outputs(this,controls);
  

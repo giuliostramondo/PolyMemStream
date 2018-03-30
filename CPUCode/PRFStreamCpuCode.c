@@ -17,8 +17,9 @@
 #define    TRIAD 5
 
 //Declarations taken from stream benchmark
+//TODO set below to 87040
 #ifndef STREAM_ARRAY_SIZE
-#   define STREAM_ARRAY_SIZE	87040
+#   define STREAM_ARRAY_SIZE	512
 #endif
 
 #ifndef OFFSET
@@ -78,11 +79,17 @@ struct timezone { int   tz_minuteswest;
         return ( (double) tp.tv_sec + (double) tp.tv_usec * 1.e-6 );
 }
 
+#define M 512
+#define N 512
+#define p 2 
+#define q 4
 
 int main(int argc, char *argv[])
 {
         int size = STREAM_ARRAY_SIZE;
         int num_copy=1;
+        int scheduleROMsize=(M*N/p*q);
+        int *scheduleROM=malloc(scheduleROMsize*sizeof(int));
         FILE *fp;
         if( access( "stream_output.csv", F_OK ) != -1 ) {
             fp  =fopen("stream_output.csv","a");//if file exists append results to existing csv (do not write header)
@@ -134,18 +141,21 @@ int main(int argc, char *argv[])
                 b[i] = 1;
                 c[i] = -1;
         }
-
+        scheduleROM[0]=0x00040155;
         //Initialize Hardware design Parameters
         PRFStream_actions_t prfStreamInput;
         prfStreamInput.param_VEC_SIZE=size;
         prfStreamInput.param_copy_repeats= num_copy;
         prfStreamInput.param_prfMode=LOAD;
+        prfStreamInput.param_scheduleROMsize=scheduleROMsize;
+        prfStreamInput.param_scheduleROMsize=0;
         prfStreamInput.instream_aStream=a;
         prfStreamInput.instream_bStream=b;
         prfStreamInput.instream_cStream=c;
         prfStreamInput.outstream_aOutStream=aOut;
         prfStreamInput.outstream_bOutStream=bOut;
         prfStreamInput.outstream_cOutStream=cOut;
+        prfStreamInput.inmem_PRFStreamKernel_ScheduleROM=scheduleROM;
         
         //Load bitstream on fpga
         max_file_t* StreamMaxFile =  PRFStream_init();
@@ -176,7 +186,7 @@ int main(int argc, char *argv[])
             for(int i = 0; i < size; ++i)
                     if ( a[i] != aOut[i] || b[i] != bOut[i] || c[i] != cOut[i]){
                         error=1;
-                        printf("error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                        printf("Load/Offload error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
                     }
 
             if(error){
@@ -185,6 +195,7 @@ int main(int argc, char *argv[])
             }
             printf("Copy benchmark ... \n");
             prfStreamInput.param_prfMode=COPY;
+            prfStreamInput.param_scheduleROMsize=0;
             times[2][k] = mysecond();
             PRFStream_run(StreamDFE,&prfStreamInput);
             times[2][k] =( mysecond() - times[2][k]);
@@ -196,7 +207,7 @@ int main(int argc, char *argv[])
             for(int i = 0; i < size; ++i)
                     if ( a[i] != cOut[i]){
                         error=1;
-                        printf("error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                        printf("Copy error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
                     }
 
             if(error){
@@ -218,7 +229,7 @@ int main(int argc, char *argv[])
             for(int i = 0; i < size; ++i)
                     if ( bOut[i] != 3* cOut[i]){
                         error=1;
-                        printf("error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                        printf("Scale error index :%d  %d , %d , %d , %d , %d , %d \n",i,a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
                     }
 
             if(error){
@@ -238,7 +249,7 @@ int main(int argc, char *argv[])
             for(int i = 0; i < size; ++i)
                     if ( aOut[i] + bOut[i] != cOut[i]){
                         error=1;
-                        printf("error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                        printf("ADD error index: %d ->%d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
                     }
 
             if(error){
@@ -258,7 +269,7 @@ int main(int argc, char *argv[])
             for(int i = 0; i < size; ++i)
                     if ( aOut[i] != bOut[i] + 3* cOut[i]){
                         error=1;
-                        printf("error %d , %d , %d , %d , %d , %d \n",a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                        printf("TRIAD error index:%d-> %d , %d , %d , %d , %d , %d \n",i,a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
                     }
 
             if(error){
