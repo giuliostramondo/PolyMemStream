@@ -11,6 +11,9 @@
 #define    ADD 4
 #define    TRIAD 5
 
+int M=512;
+int N=512;
+
 void failed(){
         printf("[ \x1B[31mFailed\e[0m ]\n");
 }
@@ -264,13 +267,14 @@ int test_STREAM_sparse_with_schedule(){
     double *aOut = malloc(sizeBytes);
     double *bOut = malloc(sizeBytes);
     double *cOut = malloc(sizeBytes);
+    double *cExpectedOut = malloc(sizeBytes);
 
 
-    char *scheduleFile= "europar_polymem_30percent_solution_RoCo.schedule";
+
+    char *scheduleFile= "europar_polymem_30percent_solution_RoCo.schedule_v2";
     Schedule *s = parseSchedule(scheduleFile);
-        printf("here");
+
     int schedule_len = getFileLenght(scheduleFile);
-        printf("here2");
 
     if (s==FILE_NOT_FOUND) {
         printf("FILE_NOT_FOUND");
@@ -283,6 +287,35 @@ int test_STREAM_sparse_with_schedule(){
             c[i] = -1;
     }
 
+    //Compute expected C output
+     // initialize with -1  
+    for(int i=0;i< vec_size; i++)
+        cExpectedOut[i]=-1;
+    // Only copy from A elements accessed by the schedule
+    printf("START DEBUG sparse with schedule expected output\n");
+    for(int i=0;i< schedule_len; i++)
+        {
+          int *mask = s[i].mask; 
+           Address2d *access=AGU( s[i].i,s[i].j,2,4,s[i].shape);
+           printf("schedule %d, i:%d, j:%d shape:%d  \n",i,s[i].i,s[i].j,s[i].shape);
+           printf("mask: ");
+           for(int j=0;j<8;j++)
+               printf("%d ",mask[j]);
+           printf("\n");
+               printf("index to update : ");
+            for( int j =0;j<2*4;j++){
+                if(mask[j]==1){
+
+                    int index = access[j].i*M+access[j].j;
+                    printf("(id: %d value of a: %d) ",index,a[index]);
+                    cExpectedOut[index]=a[index];
+                    printf("Expected C : %f\n", cExpectedOut[index]);
+                }
+            }
+                   printf("\n");
+        }
+
+    printf("END DEBUG sparse with schedule expected output\n");
     PRFStream_actions_t prfStreamInput;
     prfStreamInput.param_VEC_SIZE=vec_size;
     prfStreamInput.param_copy_repeats= 1;
@@ -314,15 +347,14 @@ int test_STREAM_sparse_with_schedule(){
 
     int error=0;
     for(int i = 0; i < 87040; ++i){
-        if( i == 1 || i == 3 || i == 5 || i== 7){
-            if(cOut[i]!=aOut[i])
-                error=1;
-        }else{
-            if (cOut[i]!=-1)
-                error=1;
+        if ( cExpectedOut[i] != cOut[i]){
+            error=1;
+            printf("COPY SPARSE with schedule ERROR DUMP id : %d -> %f , %f , %f , %f , %f , %f \n",i,a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+            printf("Expected C : %f\n", cExpectedOut[i]);
         }
         if(VERBOSE){
                 printf("COPY SPARSE with schedule DUMP id : %d -> %f , %f , %f , %f , %f , %f \n",i,a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+            printf("Expected C : %f\n", cExpectedOut[i]);
         }
     }
     max_unload(StreamDFE);

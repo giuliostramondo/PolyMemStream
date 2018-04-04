@@ -6,6 +6,7 @@
 #include "Maxfiles.h"
 #include "MaxSLiCInterface.h"
 #include "schedule_utils.h"
+#include "prf.h"
 
 struct testsuite{
     int (*function)();

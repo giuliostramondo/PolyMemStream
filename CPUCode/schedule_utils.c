@@ -5,6 +5,7 @@
 int64_t *compress_schedule_toROM(Schedule *s, int schedule_len,int lanes,
                                                     int schedule_rom_size){
     int64_t *rom_data = (int64_t*) malloc(sizeof(int64_t)*schedule_rom_size);
+    printf("schedule len : %d\n",schedule_len);
     for(int i=0;i<schedule_rom_size;i++)
         rom_data[i]=0;
     for(int i =0;i<schedule_len;i++){

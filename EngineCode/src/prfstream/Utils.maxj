@@ -203,13 +203,18 @@ class Utils extends Kernel {
         Kernel prf_kernel = input.getKernel();
         DFEVar tmp = prf_kernel.constant.var(0).cast(dfeUInt(N));
         DFEVar select[] = new DFEVar[p*q];
+         prf_kernel.debug.simPrintf("CreateBitwiseDeMux\nselect:");
         for(int i=0;i<p;i++){
             for(int j=0;j<q;j++){
              select[i*q+j]= select_v_input[i][j]*q+ select_h_input[i][j];
+             prf_kernel.debug.simPrintf("%d ",select[i*q+j]);
             }
         }
+         prf_kernel.debug.simPrintf("\n");
+         prf_kernel.debug.simPrintf("reordering:\n");
         for(int i=0;i<N;i++){
-            tmp=((input.rotateLeft(select[i].cast(dfeUInt(4)))&0x1)<<i)|tmp;
+            tmp=((input.rotateRight(i)&0x1)<<select[i].cast(dfeUInt(4)))|tmp;
+             prf_kernel.debug.simPrintf("iteration %d tmp : %d \n",i,tmp);
         }
         return tmp;
     }
@@ -799,10 +804,12 @@ class Utils extends Kernel {
                 memorymodules[i][j] = prf_kernel.mem.alloc(type, MEMORY_DEPTH);
 
         }
-
+        
+        prf_kernel.debug.simPrintf("complexive (inmemory ) writeEnable %d\n",write_enable);
         for(int i =0 ; i< p ; i++)
             for(int j =0; j< q; j++){
             DFEVar enable = (write_enable>>(i*q+j)).cast(dfeUInt(1));
+            prf_kernel.debug.simPrintf("i: %d j: %d value %f writeEnable %d\n",i,j,input_data_arr[i*q+j],enable);
             memorymodules[i][j].write((in_module_address[i*q+j]).cast(dfeUInt(MEMORY_ADDRESS_SIZE)), input_data_arr[i*q+j], enable);
             output[i][j] =memorymodules[i][j].read((in_module_address_read[i*q+j]).cast(dfeUInt(MEMORY_ADDRESS_SIZE)));
             //output[i][j].simWatch("output_"+i+"_"+j);
