@@ -256,8 +256,8 @@ int test_STREAM_sparse(){
 
 
 int test_STREAM_sparse_with_schedule(){
-
-    int sizeBytes = 87040 * sizeof(double);
+    int vec_size = 87040;
+    int sizeBytes = vec_size * sizeof(double);
     double *a = malloc(sizeBytes);
     double *b = malloc(sizeBytes);
     double *c = malloc(sizeBytes);
@@ -284,7 +284,7 @@ int test_STREAM_sparse_with_schedule(){
     }
 
     PRFStream_actions_t prfStreamInput;
-    prfStreamInput.param_VEC_SIZE=STREAM_ARRAY_SIZE;
+    prfStreamInput.param_VEC_SIZE=vec_size;
     prfStreamInput.param_copy_repeats= 1;
     prfStreamInput.param_prfMode=LOAD;
     //Do not use the schedule for loading/Offloading
