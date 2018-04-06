@@ -20,7 +20,7 @@ public class PRFStreamManager {
 		PRFStreamEngineParameters params = new PRFStreamEngineParameters(args);
 		Manager manager = new Manager(params);
 		Kernel kernel   = new PRFStreamKernel(manager.makeKernelParameters(s_kernelName));
-        manager.setClockFrequency(120);
+        manager.setClockFrequency(100);
 		manager.setKernel(kernel);
 		manager.setIO(
             IOType.ALL_CPU
