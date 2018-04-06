@@ -1,5 +1,5 @@
 #
 # This file is managed by MaxIDE. Do NOT change.
 #
-HEADERS:= schedule_utils.h  tests.h
-SOURCES:= PRFStreamCpuCode.c schedule_utils.c tests.c
+HEADERS:= schedule_utils.h  tests.h prf.h collection.h
+SOURCES:= PRFStreamCpuCode.c schedule_utils.c tests.c prf.c collection.c
