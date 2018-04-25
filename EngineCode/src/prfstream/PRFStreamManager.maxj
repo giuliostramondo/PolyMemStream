@@ -1,4 +1,3 @@
-
 package prfstream;
 
 import static com.maxeler.maxcompiler.v2.managers.standard.Manager.link;
@@ -7,30 +6,127 @@ import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
 import com.maxeler.maxcompiler.v2.managers.BuildConfig;
 import com.maxeler.maxcompiler.v2.managers.engine_interfaces.CPUTypes;
 import com.maxeler.maxcompiler.v2.managers.engine_interfaces.EngineInterface;
+import com.maxeler.maxcompiler.v2.managers.engine_interfaces.EngineInterface.Direction;
+import com.maxeler.maxcompiler.v2.managers.engine_interfaces.GeneratedInterface;
 import com.maxeler.maxcompiler.v2.managers.engine_interfaces.InterfaceParam;
 import com.maxeler.maxcompiler.v2.managers.standard.IOLink.IODestination;
 import com.maxeler.maxcompiler.v2.managers.standard.Manager;
 import com.maxeler.maxcompiler.v2.managers.standard.Manager.IOType;
 
-public class PRFStreamManager {
+import com.maxeler.maxcompiler.v2.kernelcompiler.stdlib.KernelMath;
+import com.maxeler.maxcompiler.v2.managers.custom.CustomManager;
+import com.maxeler.maxcompiler.v2.managers.custom.DFELink;
+
+import com.maxeler.maxcompiler.v2.managers.custom.blocks.Demux;
+import com.maxeler.maxcompiler.v2.managers.custom.blocks.KernelBlock; 
+import com.maxeler.maxcompiler.v2.managers.custom.blocks.Mux;
+import com.maxeler.maxcompiler.v2.build.EngineParameters;
+import com.maxeler.maxcompiler.v2.managers.custom.stdlib.MemoryControlGroup;
+
+public class PRFStreamManager extends CustomManager {
 
 	private static final String s_kernelName = "PRFStreamKernel";
 
+    PRFStreamManager(EngineParameters engineParameters){
+        super(engineParameters);
+        KernelBlock k = addKernel(new PRFStreamKernel(makeKernelParameters(s_kernelName)));
+
+        DFELink fromcpu_toLMEM = addStreamFromCPU("fromcpu_toLMEM"); 
+        DFELink tocpu_fromLMEM = addStreamToCPU("tocpu_fromLMEM");
+        //Direct links from CPU to LMEM
+        DFELink cpu2lmem = addStreamToOnCardMemory("cpu2lmem", MemoryControlGroup.MemoryAccessPattern.LINEAR_1D); 
+        DFELink lmem2cpu = addStreamFromOnCardMemory("lmem2cpu", MemoryControlGroup.MemoryAccessPattern.LINEAR_1D);
+
+        cpu2lmem <== fromcpu_toLMEM; 
+        tocpu_fromLMEM <== lmem2cpu;
+
+        //3 CPU input A B C
+        DFELink fromcpu_inA = addStreamFromCPU("fromcpu_inA"); 
+        DFELink fromcpu_inB = addStreamFromCPU("fromcpu_inB"); 
+        DFELink fromcpu_inC = addStreamFromCPU("fromcpu_inC"); 
+        
+        //3 CPU output A B C
+        DFELink tocpu_outA = addStreamToCPU("tocpu_outA");
+        DFELink tocpu_outB = addStreamToCPU("tocpu_outB");
+        DFELink tocpu_outC = addStreamToCPU("tocpu_outC");
+
+
+        //3 LMEM input A B C
+        DFELink fromLMEM_inA = addStreamFromOnCardMemory("fromLMEM_inA", MemoryControlGroup.MemoryAccessPattern.LINEAR_1D); 
+        DFELink fromLMEM_inB = addStreamFromOnCardMemory("fromLMEM_inB", MemoryControlGroup.MemoryAccessPattern.LINEAR_1D);
+        DFELink fromLMEM_inC = addStreamFromOnCardMemory("fromLMEM_inC", MemoryControlGroup.MemoryAccessPattern.LINEAR_1D);
+
+
+        Mux select_InA_CPU_or_LMEM = mux("select_InA_CPU_or_LMEM");
+        select_InA_CPU_or_LMEM.addInput("inA_CPU")<==fromcpu_inA;
+        select_InA_CPU_or_LMEM.addInput("inA_LMEM")<==fromLMEM_inA;
+        DFELink inA = select_InA_CPU_or_LMEM.getOutput();
+
+        Mux select_InB_CPU_or_LMEM = mux("select_InB_CPU_or_LMEM");
+        select_InB_CPU_or_LMEM.addInput("inB_CPU")<==fromcpu_inB;
+        select_InB_CPU_or_LMEM.addInput("inB_LMEM")<==fromLMEM_inB;
+        DFELink inB = select_InB_CPU_or_LMEM.getOutput();
+
+        Mux select_InC_CPU_or_LMEM = mux("select_InC_CPU_or_LMEM");
+        select_InC_CPU_or_LMEM.addInput("inC_CPU")<==fromcpu_inC;
+        select_InC_CPU_or_LMEM.addInput("inC_LMEM")<==fromLMEM_inC;
+        DFELink inC = select_InC_CPU_or_LMEM.getOutput();
+
+        // MUX to select either cpu either LMEM
+        k.getInput("aStream") <== inA; 
+        k.getInput("bStream") <== inB;
+        k.getInput("cStream") <== inC;
+
+        //DEMUX to select output to cpu or LMEM
+        DFELink toLMEM_outA = addStreamToOnCardMemory("toLMEM_outA",MemoryControlGroup.MemoryAccessPattern.LINEAR_1D);
+        DFELink toLMEM_outB = addStreamToOnCardMemory("toLMEM_outB",MemoryControlGroup.MemoryAccessPattern.LINEAR_1D);
+        DFELink toLMEM_outC = addStreamToOnCardMemory("toLMEM_outC",MemoryControlGroup.MemoryAccessPattern.LINEAR_1D);
+
+        Demux select_OutA_CPU_or_LMEM= demux("select_OutA_CPU_or_LMEM");
+        select_OutA_CPU_or_LMEM.getInput() <== k.getOutput("aOutStream");
+        tocpu_outA <== select_OutA_CPU_or_LMEM.addOutput("cpu_aOutStream");
+        toLMEM_outA <== select_OutA_CPU_or_LMEM.addOutput("LMEM_aOutStream");
+
+        Demux select_OutB_CPU_or_LMEM= demux("select_OutB_CPU_or_LMEM");
+        select_OutB_CPU_or_LMEM.getInput() <== k.getOutput("bOutStream");
+        tocpu_outB <== select_OutB_CPU_or_LMEM.addOutput("cpu_bOutStream");
+        toLMEM_outB <== select_OutB_CPU_or_LMEM.addOutput("LMEM_bOutStream");
+
+        Demux select_OutC_CPU_or_LMEM= demux("select_OutC_CPU_or_LMEM");
+        select_OutC_CPU_or_LMEM.getInput() <== k.getOutput("cOutStream");
+        tocpu_outC <== select_OutC_CPU_or_LMEM.addOutput("cpu_cOutStream");
+        toLMEM_outC <== select_OutC_CPU_or_LMEM.addOutput("LMEM_cOutStream");
+    
+    }
+
 	public static void main(String[] args) {
 		PRFStreamEngineParameters params = new PRFStreamEngineParameters(args);
-		Manager manager = new Manager(params);
-		Kernel kernel   = new PRFStreamKernel(manager.makeKernelParameters(s_kernelName));
-        manager.setClockFrequency(100);
-		manager.setKernel(kernel);
-		manager.setIO(
-            IOType.ALL_CPU
-			);
+		PRFStreamManager manager = new PRFStreamManager(params);
+		//Kernel kernel   = new PRFStreamKernel(manager.makeKernelParameters(s_kernelName));
+        //manager.setClockFrequency(100);
+		//manager.setKernel(kernel);
+		//manager.setIO(
+        //    IOType.ALL_CPU
+		//	);
+
 
 		manager.createSLiCinterface(interfaceDefault());
+		GeneratedInterface interface_loadFromHost = loadFromHost();
+        manager.createSLiCinterface(interface_loadFromHost); 
+		GeneratedInterface interface_readFromLMEM = readFromLMEM();
+        manager.createSLiCinterface(interface_readFromLMEM);
+		GeneratedInterface interface_writeToLMEM = writeToLMEM();
+        manager.createSLiCinterface(interface_writeToLMEM); 
+
+		GeneratedInterface interface_loadFromDRAM = loadFromDRAM();
+        manager.createSLiCinterface(interface_loadFromDRAM); 
 		
-		configBuild(manager, params);
+        
+        //configBuild(manager, params);
 		manager.build();
 	}
+
+
 
 	private static EngineInterface interfaceDefault() {
 		EngineInterface engine_interface = new EngineInterface();
@@ -54,19 +150,175 @@ public class PRFStreamManager {
             3*N/(p*q) : compute_ticks;
     InterfaceParam inN = (PRFMODE === PRFStreamKernel.PRFMode.LOAD.ordinal())? N:0;
 		engine_interface.setTicks(s_kernelName, ticks);
-		engine_interface.setStream("aStream",   type, inN * size);
-		engine_interface.setStream("bStream",   type, inN * size);
-		engine_interface.setStream("cStream",   type, inN * size);
+		engine_interface.setStream("fromcpu_inA",   type, inN * size);
+		engine_interface.setStream("fromcpu_inB",   type, inN * size);
+		engine_interface.setStream("fromcpu_inC",   type, inN * size);
         InterfaceParam outN = (PRFMODE === PRFStreamKernel.PRFMode.OFFLOAD.ordinal())? N:2;
-            engine_interface.setStream("aOutStream",   type, (size * outN));
-            engine_interface.setStream("bOutStream",   type, (size * outN));
-            engine_interface.setStream("cOutStream",   type, (size * outN));
+            engine_interface.setStream("tocpu_outA",   type, (size * outN));
+            engine_interface.setStream("tocpu_outB",   type, (size * outN));
+            engine_interface.setStream("tocpu_outC",   type, (size * outN));
             //engine_interface.setStream("aOutStream",   type, (size * N));
             //engine_interface.setStream("bOutStream",   type, (size * N));
-            //engine_interface.setStream("cOutStream",   type, (size * N));
+            //engine_interface.setStream("cOutStream",   type, (size * N));0
+            //
+        engine_interface.route("select_InA_CPU_or_LMEM->inA_CPU, select_InB_CPU_or_LMEM->inB_CPU, select_InC_CPU_or_LMEM->inC_CPU, select_OutA_CPU_or_LMEM->cpu_aOutStream, select_OutB_CPU_or_LMEM->cpu_bOutStream, select_OutC_CPU_or_LMEM->cpu_cOutStream");
+
+        engine_interface.ignoreLMem("cpu2lmem");
+        engine_interface.ignoreLMem("lmem2cpu");
+        engine_interface.ignoreLMem("fromLMEM_inA");
+        engine_interface.ignoreLMem("fromLMEM_inB");
+        engine_interface.ignoreLMem("fromLMEM_inC");
+        engine_interface.ignoreLMem("toLMEM_outA");
+        engine_interface.ignoreLMem("toLMEM_outB");
+        engine_interface.ignoreLMem("toLMEM_outC");
+        engine_interface.ignoreStream("tocpu_fromLMEM");
+        engine_interface.ignoreStream("fromcpu_toLMEM");
 		return engine_interface;
 	}
-	
+
+    private static GeneratedInterface writeToLMEM(){
+		EngineInterface engine_interface = new EngineInterface("writeToLMEM");
+        InterfaceParam size = engine_interface.addParam("size", CPUTypes.INT64); 
+        InterfaceParam start = engine_interface.addParam("start_address", CPUTypes.INT64);
+        InterfaceParam sizeInBytes = size * CPUTypes.INT64.sizeInBytes();
+        engine_interface.setLMemLinear("cpu2lmem", start * CPUTypes.INT64.sizeInBytes(), sizeInBytes);
+        engine_interface.setStream("fromcpu_toLMEM", CPUTypes.INT64, sizeInBytes );
+        engine_interface.ignoreAll(Direction.IN_OUT); 
+        return engine_interface; 
+    }
+
+    private static GeneratedInterface readFromLMEM(){
+		EngineInterface engine_interface = new EngineInterface("readFromLMEM");
+        InterfaceParam size = engine_interface.addParam("size", CPUTypes.INT64); 
+        InterfaceParam start = engine_interface.addParam("start_address", CPUTypes.INT64);
+        InterfaceParam sizeInBytes = size * CPUTypes.INT64.sizeInBytes();
+        engine_interface.setLMemLinear("lmem2cpu", start * CPUTypes.INT64.sizeInBytes(), sizeInBytes);
+        engine_interface.setStream("tocpu_fromLMEM", CPUTypes.INT64, sizeInBytes );
+        engine_interface.ignoreAll(Direction.IN_OUT); 
+        return engine_interface; 
+    }
+
+    private static  GeneratedInterface loadFromHost() {
+		EngineInterface engine_interface = new EngineInterface("loadFromHost");
+		CPUTypes   type = CPUTypes.DOUBLE;
+		int        size = type.sizeInBytes();
+        int p = PRFConstants.p;
+        int q = PRFConstants.q;
+		InterfaceParam  N    = engine_interface.addParam("VEC_SIZE", CPUTypes.INT64);
+		InterfaceParam  PRFMODE    = engine_interface.addConstant(PRFStreamKernel.PRFMode.LOAD.ordinal());
+		InterfaceParam  copyRepeats= engine_interface.addConstant(1);
+		InterfaceParam  scheduleROMsize= engine_interface.addConstant(0);
+
+        engine_interface.route("select_InA_CPU_or_LMEM->inA_CPU, select_InB_CPU_or_LMEM->inB_CPU, select_InC_CPU_or_LMEM->inC_CPU, select_OutA_CPU_or_LMEM->cpu_aOutStream, select_OutB_CPU_or_LMEM->cpu_bOutStream, select_OutC_CPU_or_LMEM->cpu_cOutStream");
+
+		engine_interface.setScalar(s_kernelName, "vectorSize", N);
+		engine_interface.setScalar(s_kernelName, "prfMode", PRFMODE);
+		engine_interface.setScalar(s_kernelName, "copy_repeats", copyRepeats);
+		engine_interface.setScalar(s_kernelName, "scheduleROMsize", scheduleROMsize);
+
+
+        InterfaceParam compute_ticks = copyRepeats*(N/(p*q)+PRFStreamKernel.loop_delay);
+        InterfaceParam ticks = 3*N/(p*q);
+        InterfaceParam inN =  N;
+		engine_interface.setTicks(s_kernelName, ticks);
+
+		engine_interface.setStream("fromcpu_inA",   type, inN * size);
+		engine_interface.setStream("fromcpu_inB",   type, inN * size);
+		engine_interface.setStream("fromcpu_inC",   type, inN * size);
+        //Without output streams nothing is executed.
+        InterfaceParam outN = engine_interface.addConstant(2);
+        engine_interface.setStream("tocpu_outA",   type, (size * outN));
+        engine_interface.setStream("tocpu_outB",   type, (size * outN));
+        engine_interface.setStream("tocpu_outC",   type, (size * outN));
+        engine_interface.ignoreAll(Direction.IN_OUT);
+		return engine_interface;
+	}
+
+    //This interface assumes that vectors A B and C have been loaded in memory
+    //contiguously. Also the starting address for A B and C need to be padded 
+    //such that they are located at 384 bytes multiple.
+    private static  GeneratedInterface loadFromDRAM() {
+		EngineInterface engine_interface = new EngineInterface("loadFromDRAM");
+        InterfaceParam mem_ops_multiple=engine_interface.addConstant(384);
+		CPUTypes   type = CPUTypes.DOUBLE;
+		int        size = type.sizeInBytes();
+        int p = PRFConstants.p;
+        int q = PRFConstants.q;
+		InterfaceParam  N    = engine_interface.addParam("VEC_SIZE", CPUTypes.INT64);
+		InterfaceParam  PRFMODE    = engine_interface.addConstant(PRFStreamKernel.PRFMode.LOAD.ordinal());
+        InterfaceParam addressA = engine_interface.addConstant(0);
+        InterfaceParam addressB =( (N*CPUTypes.INT64.sizeInBytes()/mem_ops_multiple)+1)*mem_ops_multiple ;
+        InterfaceParam addressC = ( (2*N*CPUTypes.INT64.sizeInBytes()/mem_ops_multiple)+1)*mem_ops_multiple;
+
+		InterfaceParam  copyRepeats= engine_interface.addConstant(1);
+		InterfaceParam  scheduleROMsize= engine_interface.addConstant(0);
+
+		engine_interface.setScalar(s_kernelName, "vectorSize", N);
+		engine_interface.setScalar(s_kernelName, "prfMode", PRFMODE);
+		engine_interface.setScalar(s_kernelName, "copy_repeats", copyRepeats);
+		engine_interface.setScalar(s_kernelName, "scheduleROMsize", scheduleROMsize);
+
+
+        InterfaceParam compute_ticks = copyRepeats*(N/(p*q)+PRFStreamKernel.loop_delay);
+        InterfaceParam ticks = 3*N/(p*q);
+        InterfaceParam inN = ( (N*CPUTypes.INT64.sizeInBytes()/mem_ops_multiple)+1)*mem_ops_multiple;
+		engine_interface.setTicks(s_kernelName, ticks);
+
+        engine_interface.route("select_InA_CPU_or_LMEM->inA_LMEM, select_InB_CPU_or_LMEM->inB_LMEM, select_InC_CPU_or_LMEM->inC_LMEM, select_OutA_CPU_or_LMEM->cpu_aOutStream, select_OutB_CPU_or_LMEM->cpu_bOutStream, select_OutC_CPU_or_LMEM->cpu_cOutStream");
+        engine_interface.setLMemLinear("fromLMEM_inA",addressA,inN);
+        engine_interface.setLMemLinear("fromLMEM_inB",addressB,inN);
+        engine_interface.setLMemLinear("fromLMEM_inC",addressC,inN);
+
+        //Without output streams nothing is executed.
+        InterfaceParam outN = engine_interface.addConstant(2);
+        engine_interface.setStream("tocpu_outA",   type, (size * outN));
+        engine_interface.setStream("tocpu_outB",   type, (size * outN));
+        engine_interface.setStream("tocpu_outC",   type, (size * outN));
+
+        engine_interface.ignoreAll(Direction.IN_OUT);
+		return engine_interface;
+	}
+
+    private static  GeneratedInterface storeToDRAM() {
+		EngineInterface engine_interface = new EngineInterface("storeToDRAM");
+		CPUTypes   type = CPUTypes.DOUBLE;
+		int        size = type.sizeInBytes();
+        int p = PRFConstants.p;
+        int q = PRFConstants.q;
+		InterfaceParam  N    = engine_interface.addParam("VEC_SIZE", CPUTypes.INT64);
+		InterfaceParam  PRFMODE    = engine_interface.addConstant(PRFStreamKernel.PRFMode.LOAD.ordinal());
+        InterfaceParam addressA = engine_interface.addConstant(0);
+        InterfaceParam addressB = N;
+        InterfaceParam addressC = 2*N;
+
+		InterfaceParam  copyRepeats= engine_interface.addConstant(1);
+		InterfaceParam  scheduleROMsize= engine_interface.addConstant(0);
+
+		engine_interface.setScalar(s_kernelName, "vectorSize", N);
+		engine_interface.setScalar(s_kernelName, "prfMode", PRFMODE);
+		engine_interface.setScalar(s_kernelName, "copy_repeats", copyRepeats);
+		engine_interface.setScalar(s_kernelName, "scheduleROMsize", scheduleROMsize);
+
+
+        InterfaceParam compute_ticks = copyRepeats*(N/(p*q)+PRFStreamKernel.loop_delay);
+        InterfaceParam ticks = 3*N/(p*q);
+        InterfaceParam inN =  N;
+		engine_interface.setTicks(s_kernelName, ticks);
+
+        engine_interface.route("select_InA_CPU_or_LMEM->inA_LMEM, select_InB_CPU_or_LMEM->inB_LMEM, select_InC_CPU_or_LMEM->inC_LMEM, select_OutA_CPU_or_LMEM->cpu_aOutStream, select_OutB_CPU_or_LMEM->cpu_bOutStream, select_OutC_CPU_or_LMEM->cpu_cOutStream");
+        engine_interface.setLMemLinear("fromLMEM_inA",addressA,N);
+        engine_interface.setLMemLinear("fromLMEM_inB",addressB,N);
+        engine_interface.setLMemLinear("fromLMEM_inC",addressC,N);
+
+        //Without output streams nothing is executed.
+        InterfaceParam outN = engine_interface.addConstant(2);
+        engine_interface.setStream("tocpu_outA",   type, (size * outN));
+        engine_interface.setStream("tocpu_outB",   type, (size * outN));
+        engine_interface.setStream("tocpu_outC",   type, (size * outN));
+
+        engine_interface.ignoreAll(Direction.IN_OUT);
+		return engine_interface;
+	}
 	private static void configBuild(Manager manager, PRFStreamEngineParameters params) {
 		manager.setEnableStreamStatusBlocks(true);
 		BuildConfig buildConfig = manager.getBuildConfig();
