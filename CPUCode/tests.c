@@ -40,6 +40,144 @@ int run_testsuite(Testsuite* tests, int testnb){
 }
 
 
+int test_read_write_DRAM(){
+    int STREAM_SIZE = 768;//Must be a multiple of 48 elements ( stream requirement from DRAM ) 
+    int sizeBytes = STREAM_SIZE * sizeof(double);
+    double *input = malloc(sizeBytes);
+    double *output = malloc(sizeBytes);
+    for(int i=0;i<STREAM_SIZE;i++){
+        input[i]= i;
+        output[i]=0;
+    }
+
+    //Load bitstream on fpga
+    max_file_t* StreamMaxFile =  PRFStream_init();
+    max_engine_t* StreamDFE=max_load(StreamMaxFile,"*");
+
+    //Configuring write action
+    PRFStream_writeToLMEM_actions_t write_DRAM_action;
+    write_DRAM_action.param_size=STREAM_SIZE;
+    write_DRAM_action.param_start_address=0;
+    write_DRAM_action.instream_fromcpu_toLMEM =input;
+    
+    //Write to LMEM 
+    PRFStream_writeToLMEM_run(StreamDFE,&write_DRAM_action);
+
+    //Configuring read action
+    PRFStream_readFromLMEM_actions_t read_DRAM_action;
+    read_DRAM_action.param_size=STREAM_SIZE;
+    read_DRAM_action.param_start_address=0;
+    read_DRAM_action.outstream_tocpu_fromLMEM=output;
+    PRFStream_readFromLMEM_run(StreamDFE,&read_DRAM_action);
+    int error=0;
+    //test if output is equal to input
+    for(int i=0;i<STREAM_SIZE;i++){
+        if(input[i] != output[i]){
+           error=1; 
+        }  
+    }
+    
+    max_unload(StreamDFE);
+    return error;
+}
+
+//Helper function for test_load_from_DRAM_to_PolyMem
+double *generateCPUtoDRAMStream(int *stream_size,int vec_size,double * inA, double *inB, double* inC){
+    int padding = (((vec_size*8/384)+1)*384)/8- vec_size;
+    int size = (vec_size+padding)*3;
+    *(stream_size)=size;
+    double* stream = malloc(sizeof(double) * size);
+    for(int i =0;i<size;i++){
+        if(i%(vec_size + padding ) < vec_size){
+            if(i/(vec_size+padding) == 0)
+                stream[i]=inA[i];
+            else if(i/(vec_size+padding) == 1)
+                stream[i] = inB[i];
+            else if (i/(vec_size+padding) == 2)
+                stream[i] = inC[i];
+
+        }
+        else 
+            stream[i]=0; 
+        printf("STREAM GENERATOR index: %d value :%f\n",stream[i]);
+    }
+    return stream;
+}
+//Host load data to DRAM
+//PolyMem load data from DRAM
+//Run Copy Benchmark 
+//Offload from PolyMem to Host 
+int test_load_from_DRAM_to_PolyMem(){
+    //Stream to DRAM Must be a multiple of 48 elements ( stream requirement from DRAM )
+    int vec_size = 512*170;
+    int sizeBytes = vec_size * sizeof(double);
+    double *inA = malloc(sizeBytes);
+    double *inB = malloc(sizeBytes);
+    double *inC = malloc(sizeBytes);
+    double *aOut = malloc(sizeBytes);
+    double *bOut = malloc(sizeBytes);
+    double *cOut = malloc(sizeBytes);
+    //initialize A B C input vectors
+    for(int i=0;i<vec_size;i++){
+        inA[i]= i;
+        inB[i]= 1;
+        inC[i]=-1;
+    }
+
+    int stream_size;
+    double* input = generateCPUtoDRAMStream(&stream_size,vec_size,inA,inB,inC);
+
+    //Load bitstream on fpga
+    max_file_t* StreamMaxFile =  PRFStream_init();
+    max_engine_t* StreamDFE=max_load(StreamMaxFile,"*");
+
+    //Configuring write action
+    PRFStream_writeToLMEM_actions_t write_DRAM_action;
+    write_DRAM_action.param_size=stream_size;
+    write_DRAM_action.param_start_address=0;
+    write_DRAM_action.instream_fromcpu_toLMEM =input;
+    
+    //Write to LMEM 
+    PRFStream_writeToLMEM_run(StreamDFE,&write_DRAM_action);
+
+    double *dummyOutputA= malloc(sizeof(double)*2);
+    double *dummyOutputB= malloc(sizeof(double)*2);
+    double *dummyOutputC= malloc(sizeof(double)*2);
+
+    PRFStream_loadFromDRAM_actions_t load_DRAM_action;
+    load_DRAM_action.outstream_tocpu_outA=dummyOutputA;
+    load_DRAM_action.outstream_tocpu_outB=dummyOutputB;
+    load_DRAM_action.outstream_tocpu_outC=dummyOutputC;
+    load_DRAM_action.param_VEC_SIZE=512*170;
+
+    //Load from DRAM to PolyMem
+    PRFStream_loadFromDRAM_run(StreamDFE,&load_DRAM_action);
+
+    //Offload from PolyMem to Host
+    int64_t * scheduleROM = malloc((512*512/8)*sizeof(int64_t));
+    PRFStream_actions_t prfStreamInput;
+    prfStreamInput.param_VEC_SIZE=512*170;
+    prfStreamInput.param_copy_repeats= 1;
+    prfStreamInput.param_prfMode=OFFLOAD;
+    //Do not use the schedule for loading/Offloading
+    prfStreamInput.param_scheduleROMsize=0;
+    prfStreamInput.instream_fromcpu_inA=dummyOutputA;
+    prfStreamInput.instream_fromcpu_inB=dummyOutputB;
+    prfStreamInput.instream_fromcpu_inC=dummyOutputC;
+    prfStreamInput.outstream_tocpu_outA=aOut;
+    prfStreamInput.outstream_tocpu_outB=bOut;
+    prfStreamInput.outstream_tocpu_outC=cOut;
+    prfStreamInput.inmem_PRFStreamKernel_ScheduleROM=scheduleROM;
+
+    PRFStream_run(StreamDFE,&prfStreamInput);
+    printf("Done Reading PolyMem"); 
+    for (int i =0;i<512*170;i++){
+        printf("LOAD FROM DRAM index : %d a: %f b: %f c:%f\n",i,aOut[i],bOut[i],cOut[i]);
+    }
+    max_unload(StreamDFE);
+    return 0;
+}
+
 int test_load_offload(){
     int sizeBytes = STREAM_ARRAY_SIZE * sizeof(double);
     double *a = malloc(sizeBytes);
@@ -64,12 +202,12 @@ int test_load_offload(){
     prfStreamInput.param_prfMode=LOAD;
     //Do not use the schedule for loading/Offloading
     prfStreamInput.param_scheduleROMsize=0;
-    prfStreamInput.instream_aStream=a;
-    prfStreamInput.instream_bStream=b;
-    prfStreamInput.instream_cStream=c;
-    prfStreamInput.outstream_aOutStream=aOut;
-    prfStreamInput.outstream_bOutStream=bOut;
-    prfStreamInput.outstream_cOutStream=cOut;
+    prfStreamInput.instream_fromcpu_inA=a;
+    prfStreamInput.instream_fromcpu_inB=b;
+    prfStreamInput.instream_fromcpu_inC=c;
+    prfStreamInput.outstream_tocpu_outA=aOut;
+    prfStreamInput.outstream_tocpu_outB=bOut;
+    prfStreamInput.outstream_tocpu_outC=cOut;
     prfStreamInput.inmem_PRFStreamKernel_ScheduleROM=scheduleROM;
     //Load bitstream on fpga
     max_file_t* StreamMaxFile =  PRFStream_init();
@@ -92,6 +230,69 @@ int test_load_offload(){
     return error;
 }
 
+int test_loadEngineInterface_offload(){
+    int sizeBytes = STREAM_ARRAY_SIZE * sizeof(double);
+    double *a = malloc(sizeBytes);
+    double *b = malloc(sizeBytes);
+    double *c = malloc(sizeBytes);
+    double *aOut = malloc(sizeBytes);
+    double *bOut = malloc(sizeBytes);
+    double *cOut = malloc(sizeBytes);
+
+    int64_t * scheduleROM = malloc((512*512/8)*sizeof(int64_t));
+
+    // Generate input data
+    for(int i = 0; i < STREAM_ARRAY_SIZE; ++i) {
+            a[i] = i;
+            b[i] = 1;
+            c[i] = -1;
+    }
+
+    PRFStream_loadFromHost_actions_t load_action_inputs;
+    load_action_inputs.instream_fromcpu_inA=a;
+    load_action_inputs.instream_fromcpu_inB=b;
+    load_action_inputs.instream_fromcpu_inC=c;
+    load_action_inputs.param_VEC_SIZE=STREAM_ARRAY_SIZE;
+    load_action_inputs.outstream_tocpu_outA=aOut;
+    load_action_inputs.outstream_tocpu_outB=bOut;
+    load_action_inputs.outstream_tocpu_outC=cOut;
+
+    PRFStream_actions_t prfStreamInput;
+    prfStreamInput.param_VEC_SIZE=STREAM_ARRAY_SIZE;
+    prfStreamInput.param_copy_repeats= 1;
+    prfStreamInput.param_prfMode=LOAD;
+    //Do not use the schedule for loading/Offloading
+    prfStreamInput.param_scheduleROMsize=0;
+    prfStreamInput.instream_fromcpu_inA=a;
+    prfStreamInput.instream_fromcpu_inB=b;
+    prfStreamInput.instream_fromcpu_inC=c;
+    prfStreamInput.outstream_tocpu_outA=aOut;
+    prfStreamInput.outstream_tocpu_outB=bOut;
+    prfStreamInput.outstream_tocpu_outC=cOut;
+    prfStreamInput.inmem_PRFStreamKernel_ScheduleROM=scheduleROM;
+    //Load bitstream on fpga
+    max_file_t* StreamMaxFile =  PRFStream_init();
+    max_engine_t* StreamDFE=max_load(StreamMaxFile,"*");
+
+    //PRFStream_run(StreamDFE,&prfStreamInput);
+    printf("Calling loadFromHost_run\n");
+    PRFStream_loadFromHost_run(StreamDFE,&load_action_inputs);
+    printf("Returned from  loadFromHost_run\n");
+
+    prfStreamInput.param_prfMode=OFFLOAD;
+    PRFStream_run(StreamDFE,&prfStreamInput);
+    int error=0;
+    for(int i = 0; i < STREAM_ARRAY_SIZE; ++i)
+        if ( a[i] != aOut[i] || b[i] != bOut[i] || c[i] != cOut[i]){
+                    error=1;
+                    if(VERBOSE){
+                        printf("Load/Offload error id : %d -> %f , %f , %f , %f , %f , %f \n",i,a[i] , aOut[i] , b[i] , bOut[i] , c[i] , cOut[i]);
+                    }
+                }
+
+    max_unload(StreamDFE);
+    return error;
+}
 int test_STREAM_kernel(int kernel, int (*check)(int a, int b, int c) ){
     
     int sizeBytes = STREAM_ARRAY_SIZE * sizeof(double);
@@ -117,12 +318,12 @@ int test_STREAM_kernel(int kernel, int (*check)(int a, int b, int c) ){
     prfStreamInput.param_prfMode=LOAD;
     //Do not use the schedule for loading/Offloading
     prfStreamInput.param_scheduleROMsize=0;
-    prfStreamInput.instream_aStream=a;
-    prfStreamInput.instream_bStream=b;
-    prfStreamInput.instream_cStream=c;
-    prfStreamInput.outstream_aOutStream=aOut;
-    prfStreamInput.outstream_bOutStream=bOut;
-    prfStreamInput.outstream_cOutStream=cOut;
+    prfStreamInput.instream_fromcpu_inA=a;
+    prfStreamInput.instream_fromcpu_inB=b;
+    prfStreamInput.instream_fromcpu_inC=c;
+    prfStreamInput.outstream_tocpu_outA=aOut;
+    prfStreamInput.outstream_tocpu_outB=bOut;
+    prfStreamInput.outstream_tocpu_outC=cOut;
     prfStreamInput.inmem_PRFStreamKernel_ScheduleROM=scheduleROM;
     //Load bitstream on fpga
     max_file_t* StreamMaxFile =  PRFStream_init();
@@ -217,12 +418,12 @@ int test_STREAM_sparse(){
     prfStreamInput.param_prfMode=LOAD;
     //Do not use the schedule for loading/Offloading
     prfStreamInput.param_scheduleROMsize=0;
-    prfStreamInput.instream_aStream=a;
-    prfStreamInput.instream_bStream=b;
-    prfStreamInput.instream_cStream=c;
-    prfStreamInput.outstream_aOutStream=aOut;
-    prfStreamInput.outstream_bOutStream=bOut;
-    prfStreamInput.outstream_cOutStream=cOut;
+    prfStreamInput.instream_fromcpu_inA=a;
+    prfStreamInput.instream_fromcpu_inB=b;
+    prfStreamInput.instream_fromcpu_inC=c;
+    prfStreamInput.outstream_tocpu_outA=aOut;
+    prfStreamInput.outstream_tocpu_outB=bOut;
+    prfStreamInput.outstream_tocpu_outC=cOut;
     prfStreamInput.inmem_PRFStreamKernel_ScheduleROM=scheduleROM;
     //Load bitstream on fpga
     max_file_t* StreamMaxFile =  PRFStream_init();
@@ -271,7 +472,8 @@ int test_STREAM_sparse_with_schedule(){
 
 
 
-    char *scheduleFile= "europar_polymem_30percent_solution_RoCo.schedule_v2";
+    //char *scheduleFile= "europar_polymem_30percent_solution_RoCo.schedule_v2";
+    char *scheduleFile= "./pattern_utils/schedules/offset_2/pattern_20percent_M_512_N_170_offset_2_RoCo.schedule";
     Schedule *s = parseSchedule(scheduleFile);
 
     int schedule_len = getFileLenght(scheduleFile);
@@ -322,19 +524,27 @@ int test_STREAM_sparse_with_schedule(){
     prfStreamInput.param_prfMode=LOAD;
     //Do not use the schedule for loading/Offloading
     prfStreamInput.param_scheduleROMsize=0;
-    prfStreamInput.instream_aStream=a;
-    prfStreamInput.instream_bStream=b;
-    prfStreamInput.instream_cStream=c;
-    prfStreamInput.outstream_aOutStream=aOut;
-    prfStreamInput.outstream_bOutStream=bOut;
-    prfStreamInput.outstream_cOutStream=cOut;
+    prfStreamInput.instream_fromcpu_inA=a;
+    prfStreamInput.instream_fromcpu_inB=b;
+    prfStreamInput.instream_fromcpu_inC=c;
+    prfStreamInput.outstream_tocpu_outA=aOut;
+    prfStreamInput.outstream_tocpu_outB=bOut;
+    prfStreamInput.outstream_tocpu_outC=cOut;
     prfStreamInput.inmem_PRFStreamKernel_ScheduleROM=scheduleROM;
     //Load bitstream on fpga
     max_file_t* StreamMaxFile =  PRFStream_init();
     max_engine_t* StreamDFE=max_load(StreamMaxFile,"*");
 
     PRFStream_run(StreamDFE,&prfStreamInput);
-    
+
+    //prfStreamInput.param_scheduleROMsize=0;
+    //prfStreamInput.param_prfMode=OFFLOAD;
+    //PRFStream_run(StreamDFE,&prfStreamInput);
+    //prfStreamInput.param_scheduleROMsize=0;
+    //prfStreamInput.param_prfMode=OFFLOAD;
+    //PRFStream_run(StreamDFE,&prfStreamInput);  
+
+    prfStreamInput.param_copy_repeats= 1;
     printf("START COPY SPARSE with schedule");
     prfStreamInput.param_scheduleROMsize=schedule_len;
     prfStreamInput.param_prfMode=COPY;
@@ -361,7 +571,7 @@ int test_STREAM_sparse_with_schedule(){
     return error;
 
 }
-#define TESTNB 7
+#define TESTNB 8
 int test_STREAM(){
     int error = 0;
     Testsuite stream_tests[TESTNB];
@@ -384,9 +594,19 @@ int test_STREAM(){
     stream_tests[5].function = test_STREAM_sparse;
     stream_tests[5].name = "STREAM sparse";
 
-    stream_tests[6].function = test_STREAM_sparse_with_schedule;
-    stream_tests[6].name = "STREAM sparse with schedule";
+    stream_tests[6].function = test_loadEngineInterface_offload;
+    stream_tests[6].name = "STREAM load Engine Interface";
 
+
+    stream_tests[7].function = test_read_write_DRAM;
+    stream_tests[7].name = "load offload from DRAM";
+    
+    stream_tests[7].function = test_load_from_DRAM_to_PolyMem;
+    stream_tests[7].name = "Load from DRAM to PolyMem";
+    //stream_tests[6].function = test_STREAM_sparse_with_schedule;
+    //stream_tests[6].name = "STREAM sparse with schedule";
+
+    
     error = run_testsuite(stream_tests, TESTNB);
     return error;
 }
